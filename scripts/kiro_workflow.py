@@ -638,8 +638,10 @@ def main():
             print(json.dumps({'run': str(directory), 'pid': process.pid, 'status': 'CONTROLLER_STARTED',
                               'note': 'Local process, not a cloud service; use resume after shutdown.'}, indent=2))
         else:
-            print(json.dumps(drive(directory, args.wait, args.allow_new_assessment,
-                                   assessment=args.assessment if args.command == 'resume' else None), indent=2))
+            result = drive(directory, args.wait, args.allow_new_assessment,
+                           assessment=args.assessment if args.command == 'resume' else None)
+            print(json.dumps(result, indent=2))
+            return 2 if result['status'] in {'BLOCKED', 'ASSESSMENT_FAILED', 'NEEDS_RECONCILIATION', 'REWORK_LIMIT'} else 0
     except (Blocked, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         print(json.dumps({'status': 'BLOCKED', 'reason': str(error)}))
         return 2

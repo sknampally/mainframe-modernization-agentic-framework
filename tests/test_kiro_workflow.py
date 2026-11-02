@@ -2,6 +2,7 @@
 import argparse
 import importlib.util
 import json
+import io
 import sys
 import tempfile
 import unittest
@@ -324,6 +325,12 @@ class WorkflowTests(unittest.TestCase):
     def test_malformed_agent_reply_never_becomes_pass(self):
         with self.assertRaises(ValueError): flow.json_reply('I approve this without a JSON review.')
         with self.assertRaises(flow.Blocked): flow.json_reply('{"kind":"shell","command":"anything"}')
+
+    def test_cli_does_not_report_success_for_blocked_controller(self):
+        arguments = ['kiro_workflow.py', 'resume', '--run', str(self.directory)]
+        with patch.object(sys, 'argv', arguments), patch.object(sys, 'stdout', io.StringIO()), \
+             patch.object(flow, 'drive', return_value={'status':'BLOCKED','reason':'fixture failure'}):
+            self.assertEqual(flow.main(), 2)
 
     def test_technical_pass_with_findings_is_rejected(self):
         review = self.review('REWORK'); review['decision'] = 'PASS'
