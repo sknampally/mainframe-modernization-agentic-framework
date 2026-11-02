@@ -1,0 +1,19 @@
+# Keep all real evidence outside the checkout; these patterns are a backstop.
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.aws/
+private/
+artifacts/
+transform-output/
+carddemo-atx-artifacts/
+test_plan.json
+*-task-artifact.json
+*.log
+node_modules/
+__pycache__/

@@ -1,0 +1,16 @@
+# Proposed record format; an agent must never fill in a human decision.
+contract_version: 1
+task_id: REQUIRED
+human_approver: REQUIRED
+candidate_revision: REQUIRED
+input_baseline_revision: REQUIRED
+review_record_revision: REQUIRED
+gate: REQUIRED
+authorized_action: REQUIRED
+target_environment: REQUIRED
+decision: REQUIRED # APPROVE | REJECT
+accepted_residual_risks: []
+constraints: []
+decided_at: REQUIRED
+expires_at: REQUIRED
+# Any changed revision, baseline, scope, action, or environment invalidates approval.
