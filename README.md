@@ -22,25 +22,46 @@ A service reporting a completed assessment step does not establish correct requi
 
 ## Reference architecture — proposed
 
+![Proposed reference architecture showing evidence discovery, executor and independent reviewer roles, bounded rework, human approval, and controlled delivery](docs/images/reference-architecture.svg)
+
+[Open the full-size architecture diagram](docs/images/reference-architecture.svg).
+
+
+<details>
+<summary>Mermaid architecture view</summary>
+
 ```mermaid
-flowchart TD
-    S[Approved pinned mainframe source] --> A[Assessment tools including AWS Transform]
-    A --> E[Private evidence store]
-    S --> E
-    E --> O[Orchestrator: scope and state]
-    O --> X[Executor: candidate output]
-    X --> R[Independent reviewer: source and test checks]
-    E --> R
-    R --> G{Quality gate}
-    G -->|Rework| O
-    G -->|Missing evidence or disagreement| H[Human decision]
-    G -->|Pass| H
-    H -->|Approve scoped next stage| T[Target design and .NET implementation]
-    T --> V[Equivalence and operational verification]
-    V --> D[Human release decision]
+flowchart LR
+    subgraph Discover["1. Discover and ground"]
+        direction TB
+        S["Pinned mainframe source"] --> A["AWS Transform: candidate knowledge"]
+        A --> E["Private evidence baseline"]
+    end
+    subgraph Validate["2. Execute and challenge"]
+        direction TB
+        O["Orchestrator: scope, budget, state"] --> X["Executor"]
+        O --> R["Independent reviewer"]
+        X -->|Candidate handoff| R
+        X -->|Candidate and tests| G["Quality gate"]
+        R -->|Independent review| G
+        G -->|Bounded rework| O
+        G -->|Missing evidence| B["BLOCK and escalate"]
+    end
+    subgraph Deliver["3. Approve and deliver"]
+        direction TB
+        H["Human approval: exact revision and action"] --> T["Target implementation: .NET on AWS"]
+        T --> V["Equivalence and operational verification"]
+        V --> D["Human release decision"]
+    end
+    E --> O
+    G -->|Technical pass| H
 ```
 
-Arrows describe intended responsibilities, not implemented integrations. The target stack is a design decision: C#/.NET and AWS are the intended direction; UI, storage, hosting, and migration strategy require evidence and architecture decisions.
+</details>
+
+Arrows describe intended responsibilities, not implemented integrations. The executor hands its candidate to the reviewer; the reviewer checks it against independently accessed pinned source and private evidence. Both the candidate and the review are required at the quality gate. A reviewer recommends technical acceptance; a human authorizes the next action. Missing evidence blocks advancement until resolved. The [detailed workflow](architecture/multi-agent-workflow.md) shows the execution/review sequence, rework, escalation, and approval invalidation.
+
+C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Skills and prompts are planned components; no executable skill library or orchestration engine is bundled.
 
 ## Start here
 
@@ -51,6 +72,61 @@ Arrows describe intended responsibilities, not implemented integrations. The tar
 5. Record evidence, unresolved gaps, review results, and human decisions. Missing evidence blocks the relevant gate.
 
 ## Repository map
+
+The current foundation contains the following files. The directory tree is documentation structure, not evidence that the proposed automation is implemented.
+
+```text
+mainframe-modernization-agentic-framework/
+├── README.md
+├── LICENSE
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── THIRD_PARTY.md
+├── .gitignore
+├── .github/
+│   └── pull_request_template.md
+├── architecture/
+│   └── multi-agent-workflow.md
+├── methodology/
+│   └── modernization.md
+├── agents/
+│   ├── orchestrator.md
+│   ├── executor.md
+│   └── independent-reviewer.md
+├── contracts/
+│   ├── README.md
+│   ├── task-contract.yaml
+│   ├── review-record.yaml
+│   └── approval-record.yaml
+├── quality-gates/
+│   └── README.md
+├── examples/
+│   └── carddemo/
+│       ├── README.md
+│       └── synthetic-example.md
+└── docs/
+    ├── images/
+    │   └── reference-architecture.svg
+    └── limitations.md
+```
+
+Planned additions, to be introduced in separate reviewed changes:
+
+```text
+methodology/
+├── 01-discovery.md
+├── 02-requirements-validation.md
+├── 03-target-architecture.md
+├── 04-ui-and-data-design.md
+├── 05-implementation.md
+└── 06-equivalence-testing.md
+skills/
+prompts/
+docs/
+└── lessons-learned.md
+```
+
+The six methodology stages are currently covered in `methodology/modernization.md`. The planned files above do not exist yet. Skills, prompts, and lessons learned will be added with bounded instructions and reviewed evidence rather than empty placeholders.
 
 | Path | Purpose |
 | --- | --- |
