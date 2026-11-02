@@ -13,8 +13,8 @@ Generated documentation is useful input, but it does not prove business behavior
 | Capability | Evidence status | Public repository status |
 | --- | --- | --- |
 | CardDemo assessment and draft test planning with AWS Transform | Reported in a prior private workflow; not independently reproduced here | Sanitized lessons only; no raw outputs |
-| Business-rule validation against pinned source | Required next step; not demonstrated here | Method and review contract |
-| Executor/reviewer/orchestrator collaboration | Proposed automation | Role contracts and workflow diagrams |
+| Business-rule validation against pinned source | Required next step; not demonstrated here | Phase guide, rule-validation prompt, and review contract |
+| Executor/reviewer/orchestrator collaboration | Proposed automation | Role contracts, manual task prompts, and workflow diagrams |
 | .NET generation, data conversion, and equivalence | Not demonstrated | Delivery and acceptance methodology |
 | Deployment, rollback, and autonomous operation | Not demonstrated | Human approval boundaries only |
 
@@ -25,7 +25,6 @@ A service reporting a completed assessment step does not establish correct requi
 ![Proposed reference architecture showing evidence discovery, executor and independent reviewer roles, bounded rework, human approval, and controlled delivery](docs/images/reference-architecture.svg)
 
 [Open the full-size architecture diagram](docs/images/reference-architecture.svg).
-
 
 <details>
 <summary>Mermaid architecture view</summary>
@@ -61,9 +60,22 @@ flowchart LR
 
 Arrows describe intended responsibilities, not implemented integrations. The executor hands its candidate to the reviewer; the reviewer checks it against independently accessed pinned source and private evidence. Both the candidate and the review are required at the quality gate. A reviewer recommends technical acceptance; a human authorizes the next action. Missing evidence blocks advancement until resolved. The [detailed workflow](architecture/multi-agent-workflow.md) shows the execution/review sequence, rework, escalation, and approval invalidation.
 
-C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Skills and prompts are planned components; no executable skill library or orchestration engine is bundled.
+C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Manual [task prompts](prompts/README.md) are supplied. Installed skills, an executable skill library, and an orchestration engine remain future work.
 
 ## Start here
+
+The six phase guides and copyable prompts are available now. They are manual instructions; end-to-end execution has not been demonstrated.
+
+| Phase | Guide |
+| --- | --- |
+| 1 | [Scope and discovery](methodology/01-discovery.md) |
+| 2 | [Requirements validation](methodology/02-requirements-validation.md) |
+| 3 | [Target architecture](methodology/03-target-architecture.md) |
+| 4 | [UI and data design](methodology/04-ui-and-data-design.md) |
+| 5 | [Incremental implementation](methodology/05-implementation.md) |
+| 6 | [Equivalence testing and release readiness](methodology/06-equivalence-testing.md) |
+
+**Next practical step:** complete a bounded task contract and use the [one-rule validation prompt](prompts/04-rule-validation-pilot.md) against pinned public source. Give the fixed candidate to a separate reviewer using the [review prompt](prompts/02-independent-reviewer.md). This pilot has not been run in this repository.
 
 1. Read the [methodology](methodology/modernization.md) and [quality gates](quality-gates/README.md).
 2. Define a bounded task using the [task contract](contracts/task-contract.yaml).
@@ -88,7 +100,19 @@ mainframe-modernization-agentic-framework/
 ├── architecture/
 │   └── multi-agent-workflow.md
 ├── methodology/
-│   └── modernization.md
+│   ├── modernization.md
+│   ├── 01-discovery.md
+│   ├── 02-requirements-validation.md
+│   ├── 03-target-architecture.md
+│   ├── 04-ui-and-data-design.md
+│   ├── 05-implementation.md
+│   └── 06-equivalence-testing.md
+├── prompts/
+│   ├── README.md
+│   ├── 01-executor.md
+│   ├── 02-independent-reviewer.md
+│   ├── 03-orchestrator.md
+│   └── 04-rule-validation-pilot.md
 ├── agents/
 │   ├── orchestrator.md
 │   ├── executor.md
@@ -110,29 +134,14 @@ mainframe-modernization-agentic-framework/
     └── limitations.md
 ```
 
-Planned additions, to be introduced in separate reviewed changes:
-
-```text
-methodology/
-├── 01-discovery.md
-├── 02-requirements-validation.md
-├── 03-target-architecture.md
-├── 04-ui-and-data-design.md
-├── 05-implementation.md
-└── 06-equivalence-testing.md
-skills/
-prompts/
-docs/
-└── lessons-learned.md
-```
-
-The six methodology stages are currently covered in `methodology/modernization.md`. The planned files above do not exist yet. Skills, prompts, and lessons learned will be added with bounded instructions and reviewed evidence rather than empty placeholders.
+Installed `skills/` and `docs/lessons-learned.md` remain future additions; they are not part of the current tree. Lessons learned require actual reviewed execution evidence.
 
 | Path | Purpose |
 | --- | --- |
 | [architecture](architecture/multi-agent-workflow.md) | Intended workflow, trust boundaries, and recovery |
 | [methodology](methodology/modernization.md) | Discovery through cutover and rollback |
 | [agents](agents/orchestrator.md) | Bounded role instructions |
+| [prompts](prompts/README.md) | Copyable executor, reviewer, orchestrator, and rule-validation tasks |
 | [contracts](contracts/README.md) | Task, review, and approval record templates |
 | [quality-gates](quality-gates/README.md) | Evidence required to advance |
 | [examples/carddemo](examples/carddemo/README.md) | Sanitized case-study skeleton and synthetic example |
@@ -141,7 +150,7 @@ The six methodology stages are currently covered in `methodology/modernization.m
 
 ## Delivery roadmap
 
-- Foundation: document the method, roles, gates, and public boundaries (this change).
+- Foundation: method, roles, gates, diagrams, public boundaries, phase guides, and manual prompts are supplied.
 - Validation pilot: pin public source and validate one rule with independently reviewed evidence.
 - Automation pilot: implement and test one task adapter, durable state, bounded retries, and approval enforcement.
 - Implementation pilot: build one vertical .NET slice with measured equivalence and failure-path tests.

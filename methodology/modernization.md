@@ -4,13 +4,15 @@ This is a proposed delivery method, not a completed migration record. Each stage
 
 | Stage | Work | Required deliverable |
 | --- | --- | --- |
-| 1. Scope and discovery | Pin source; inventory batch, online, data, security, integrations, schedulers, and optional modules. Record missing source and runtime dependencies. | Approved scope, source manifest, dependency map, unknowns register |
-| 2. Requirements validation | Treat extracted rules as candidates. Verify each material rule against source, including error paths, boundaries, state changes, and call context. Resolve duplicates without erasing distinct behavior. | Rule-to-source-to-test matrix; domain-owner decisions |
-| 3. Target architecture | Compare rehost, refactor, rewrite, retain, and hybrid choices per bounded capability. Estimate cost, operational ownership, and migration risk. | Architecture decisions, domain boundaries, nonfunctional requirements |
-| 4. UI and data design | Preserve observable online behavior, authorization, transaction boundaries, record semantics, encoding, numeric precision, and reconciliation. | UI/API contracts, data mapping, conversion and recovery plans |
-| 5. Incremental implementation | Implement one vertical slice in C#/.NET. Test boundary and failure behavior before expanding scope. Keep deterministic rules separate from adapters. | Reviewable implementation, tests, dependency manifest, traceability |
-| 6. Equivalence and operations | Compare legacy and target on identical controlled inputs. Test ordering, concurrency, restart, rerun, data reconciliation, security, load, and recovery. | Differential results, deviations, operational runbooks, rollback rehearsal |
+| [1. Scope and discovery](01-discovery.md) | Pin source; inventory batch, online, data, security, integrations, schedulers, and optional modules. Record missing source and runtime dependencies. | Approved scope, source manifest, dependency map, unknowns register |
+| [2. Requirements validation](02-requirements-validation.md) | Treat extracted rules as candidates. Verify each material rule against source, including error paths, boundaries, state changes, and call context. Resolve duplicates without erasing distinct behavior. | Rule-to-source-to-test matrix; domain-owner decisions |
+| [3. Target architecture](03-target-architecture.md) | Compare rehost, refactor, rewrite, retain, and hybrid choices per bounded capability. Estimate cost, operational ownership, and migration risk. | Architecture decisions, domain boundaries, nonfunctional requirements |
+| [4. UI and data design](04-ui-and-data-design.md) | Preserve observable online behavior, authorization, transaction boundaries, record semantics, encoding, numeric precision, and reconciliation. | UI/API contracts, data mapping, conversion and recovery plans |
+| [5. Incremental implementation](05-implementation.md) | Implement one vertical slice in C#/.NET. Test boundary and failure behavior before expanding scope. Keep deterministic rules separate from adapters. | Reviewable implementation, tests, dependency manifest, traceability |
+| [6. Equivalence and operations](06-equivalence-testing.md) | Compare legacy and target on identical controlled inputs. Test ordering, concurrency, restart, rerun, data reconciliation, security, load, and recovery. | Differential results, deviations, operational runbooks, rollback rehearsal |
 | 7. Human release decision | Resolve blocking discrepancies; rehearse cutover, validate rollback triggers and ownership, and record explicit authorization. | Signed decision for exact release and environment; verified post-release checks |
+
+Use the [prompt library](../prompts/README.md) to assign bounded tasks. Start with one source-derived rule and independent review; these instructions have not yet been validated by an end-to-end pilot.
 
 ## Evidence rules
 

@@ -1,6 +1,6 @@
 # Limitations and evidence discipline
 
-This foundation supplies documentation, role contracts, and manual templates. There is no working agent runtime, model integration, policy engine, cloud infrastructure, migration toolchain, .NET implementation, or automated equivalence harness.
+This foundation supplies documentation, phase guides, copyable prompts, role contracts, and manual templates. The prompts have not been validated in an end-to-end pilot and are not installed skills. There is no working agent runtime, model integration, policy engine, cloud infrastructure, migration toolchain, .NET implementation, or automated equivalence harness.
 
 The private assessment history is reported context, not reproducible public evidence. Tool-reported completion is not independently verified correctness. Test planning remained a draft in that history, and decomposition did not establish complete domain assignment. No private metrics, inventories, exports, resource identifiers, or execution metadata are republished.
 
