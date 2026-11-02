@@ -2,6 +2,7 @@
 """Resumable Kiro two-role source-validation workflow. No live service is called by import."""
 import argparse
 import asyncio
+import copy
 import fcntl
 import hashlib
 import json
@@ -19,7 +20,7 @@ from pilot import Blocked, git, require, save, sha, tracked_file
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
 DEFAULTS = {
-    'kiro_command': ['kiro-cli'], 'executor_model': None, 'reviewer_model': None,
+    'kiro_command': ['kiro-cli'], 'executor_model': None, 'reviewer_model': None, 'wireframes_model': None,
     'max_model_calls': 16, 'max_rounds': 2, 'call_timeout_seconds': 600,
     'max_context_bytes': 180000, 'max_read_bytes': 50000,
     'max_assessment_bytes': 10000000, 'max_source_upload_bytes': 100000000,
@@ -51,7 +52,7 @@ def safe_name(name):
 
 
 def settings(path):
-    config = dict(DEFAULTS)
+    config = copy.deepcopy(DEFAULTS)
     if path:
         supplied = json.loads(Path(path).read_text())
         require(isinstance(supplied, dict), 'Settings must be an object')
@@ -303,15 +304,23 @@ def assessment_step(run, directory, client=None):
         root = source_ok(run)
         archive = directory / 'source.zip'
         total = 0
+        included, excluded = [], []
         with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
             for name in git(root, 'ls-files').splitlines():
                 if not safe_name(name):
+                    excluded.append(name)
                     continue
                 path = tracked_file(root, name)
                 total += path.stat().st_size
                 require(total <= run['settings']['max_source_upload_bytes'], 'Source exceeds upload limit')
-                bundle.write(path, name)
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100600 << 16
+                content = path.read_bytes()
+                bundle.writestr(info, content)
+                included.append({'path': name, 'sha256': hashlib.sha256(content).hexdigest()})
         archive.chmod(0o600)
+        private_save(directory / 'source-upload-manifest.json', {'included': included, 'excluded': excluded})
         source_uri = config['upload_prefix'].rstrip('/') + '/' + run['run_id'] + '/source.zip'
         result = subprocess.run(['aws', 's3', 'cp', str(archive), source_uri, '--only-show-errors'],
                                 capture_output=True, text=True, timeout=120)
@@ -319,6 +328,7 @@ def assessment_step(run, directory, client=None):
         run['uploaded_source'] = {'uri': source_uri, 'sha256': sha(archive)}
         arguments = {'workspaceId': config['workspace_id'], 'jobName': run['run_id'],
                      'objective': 'Assess the source archive at ' + source_uri + '. Source commit ' + run['source']['commit'] +
+                                  '. Scope: ' + run['objective'] +
                                   '. Produce discovery, documentation, rule candidates, data/dependency analysis and a draft test plan.',
                      'intent': config.get('intent', 'Assess this mainframe application; preserve required human review tasks.')}
         if config.get('orchestrator_agent'):
