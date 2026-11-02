@@ -22,7 +22,9 @@ def call(provider, run, directory, role, message):
     work.mkdir(parents=True, exist_ok=True, mode=0o700)
     model = run['settings'].get(role + '_model')
     if provider == 'claude':
-        command = ['claude', '--bare', '-p', '--tools', '', '--disallowedTools', 'mcp__*',
+        command = ['claude', '-p', '--setting-sources', '', '--strict-mcp-config',
+                   '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands',
+                   '--settings', '{"disableAllHooks":true}', '--tools', '', '--disallowedTools', 'mcp__*',
                    '--no-session-persistence', '--output-format', 'json', '--max-turns', '1']
     else:
         command = ['codex', 'exec', '--ignore-user-config', '--ignore-rules', '--ephemeral',
@@ -46,13 +48,17 @@ def call(provider, run, directory, role, message):
             process.communicate()
         raise RuntimeUnavailable('Provider timed out; recorded call budget remains consumed')
     private_save(directory / f'provider-{run["model_calls"]}.json',
-                 {'provider': provider, 'role': role, 'returncode': process.returncode,
+                 {'provider': provider, 'role': role, 'requested_model': model, 'returncode': process.returncode,
                   'stdout': stdout, 'stderr': stderr})
     if process.returncode:
         raise RuntimeUnavailable('Provider failed; inspect private provider receipt and resume')
     if provider == 'claude':
         envelope = json.loads(stdout)
         require(not envelope.get('is_error'), 'Claude returned an error')
+        if model and role in {'executor', 'reviewer'}:
+            reported = envelope.get('modelUsage', {})
+            require(isinstance(reported, dict) and set(reported) == {model},
+                    'Claude model identity missing or different from the pinned model; output rejected')
         reply = envelope.get('result', '')
     else:
         events = [json.loads(line) for line in stdout.splitlines() if line.strip()]

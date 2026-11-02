@@ -51,6 +51,16 @@ def locked(work):
         yield read(work / 'project.json')
 
 
+def validate_model_pair(executor, config):
+    if executor != 'claude':
+        return
+    pair = [config.get(role + '_model') for role in ('executor', 'reviewer')]
+    require(all(isinstance(x, str) and x.startswith('claude-') and x.strip() == x for x in pair),
+            'Claude roles require explicit full model IDs; aliases/defaults are not accepted')
+    require(pair[0].lower().replace('[1m]', '') != pair[1].lower().replace('[1m]', ''),
+            'Executor and reviewer must use different Claude models')
+
+
 def initialize(args, work):
     require(not (work / 'project.json').exists(), 'Workspace already initialized; use status')
     require(not work.is_relative_to(FRAMEWORK), 'Private workspace must be outside framework checkout')
@@ -74,6 +84,11 @@ def initialize(args, work):
         require(result.returncode == 0, 'Requested source ref could not be checked out')
     require(not git(source, 'status', '--porcelain'), 'Source checkout must be clean')
     config = kw.settings(args.settings)
+    if args.executor == 'claude' and not config['executor_model']:
+        config['executor_model'] = 'claude-sonnet-5-5'
+    if not config['reviewer_model']:
+        config['reviewer_model'] = 'claude-opus-5-5'
+    validate_model_pair(args.executor, config)
     config['transform'].update({k: v for k, v in {'workspace_id': args.transform_workspace,
         'upload_prefix': ('s3://' + args.bucket + '/modernize') if args.bucket else None}.items() if v})
     project = {'version': 2, 'scope': args.scope, 'source': {'root': str(source),
@@ -298,6 +313,7 @@ def decision(work, project, args):
 
 def pipeline(work, project, args, runtime=model_call):
     verify_source(project)
+    validate_model_pair(project['providers']['executor'], project['settings'])
     label = project.get('selected')
     require(label, 'Approve Phase 1 before running agents')
     assessment_dir, assessment_run = verified_assessment(project, label)
@@ -465,6 +481,8 @@ def package(work, project):
     shutil.copyfile(work / project['site']['directory'] / 'index.html', destination / 'review.html')
     write(destination / 'provenance.json', {'source': {k: v for k, v in project['source'].items() if k != 'root'},
         'scope': project['scope'], 'framework_commit': project['framework_commit'],
+        'providers': project['providers'],
+        'role_models': {role: project['settings'].get(role + '_model') for role in ('executor', 'reviewer', 'wireframes')},
         'assessment_sha256': project['assessments'][project['selected']]['sha256'],
         'specification_sha256': project['specification']['sha256'],
         'limitations': ['No application built or deployed', 'No runtime equivalence established',
@@ -591,8 +609,8 @@ def parser():
     init.add_argument('--region')
     init.add_argument('--bucket')
     init.add_argument('--transform-workspace')
-    init.add_argument('--executor', choices=['kiro', 'claude', 'codex'], default='kiro')
-    init.add_argument('--ui-provider', choices=['claude', 'codex'], default='claude')
+    init.add_argument('--executor', choices=['kiro', 'claude', 'codex'], default='claude')
+    init.add_argument('--ui-provider', choices=['claude', 'codex'], default='codex')
     s = commands.add_parser('setup', help='Check AWS, connect Transform, create or attach assessment resources')
     for flag in ('connect', 'create-workspace', 'create-connector', 'attach-workspace', 'attach-connector', 'role-arn', 'connector-approved'):
         s.add_argument('--' + flag)

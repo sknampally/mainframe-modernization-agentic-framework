@@ -28,7 +28,7 @@ Generated documentation is useful input, but it does not prove business behavior
 | Capability | Evidence status | Public repository status |
 | --- | --- | --- |
 | AWS Transform assessment | Setup/job adapters tested with fixtures; live acceptance pending | GitHub/local source, chosen S3 destination, workspace/connector setup, existing local/S3 findings, wait/resume |
-| Independent validation | Structural checks and synthetic handoff verified | Executor plus Claude Code reviewer independently request source and findings; bounded rework |
+| Independent validation | Structural checks and synthetic handoff verified | Claude Sonnet executor plus Claude Opus reviewer independently request source and findings; distinct pinned model IDs, bounded rework |
 | Approval gates | Hash invalidation tested | Separate assessment, SME/architect and business specification gates |
 | HTML business review | Deterministic rendering and escaping tested | Claude/Codex-generated screen content; inert HTML with rules, states and specifications |
 | Implementation preparation | Synthetic four-phase package tested | Versioned ZIP with specifications, prompts, backlog, decisions, monorepo proposal and checksums |
@@ -141,6 +141,7 @@ mainframe-modernization-agentic-framework/
 │   └── README.md
 ├── examples/
 │   ├── config/
+│   │   ├── claude-settings.example.json
 │   │   └── kiro-settings.example.json
 │   └── carddemo/
 │       ├── README.md

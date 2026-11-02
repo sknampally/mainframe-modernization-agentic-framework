@@ -1,0 +1,5 @@
+{
+  "executor_model": "claude-sonnet-5-5",
+  "reviewer_model": "claude-opus-5-5",
+  "wireframes_model": null
+}

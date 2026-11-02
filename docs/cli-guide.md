@@ -6,8 +6,7 @@ or prove behavioral equivalence. AWS assessment resources are the only cloud
 resources this CLI can create.
 
 **Status:** implemented and covered by offline tests, including a synthetic
-four-phase acceptance path. Live AWS, Kiro, Claude Code and Codex provider execution
-is still pending acceptance. Do not describe fixture results as a CardDemo result.
+four-phase acceptance path. Full live AWS/Kiro/Claude Code/Codex workflow acceptance is still pending. A small synthetic Claude model connectivity check is separate from application-level acceptance. Do not describe fixture results as a CardDemo result.
 Python 3.10+ on macOS/Linux is required; Windows is not supported by the current
 file-lock/process-group implementation. Run from a clean committed framework checkout.
 
@@ -51,7 +50,7 @@ configured SSO profile. The framework does not collect passwords or store AWS ke
   --ref <full-reviewed-source-commit> \
   --scope "CardDemo sign-on journey; exclude other application journeys" \
   --aws-profile <your-profile> --region <your-region> --bucket <your-private-bucket> \
-  --executor kiro --ui-provider claude
+  --executor claude --ui-provider codex
 ```
 
 For local source, pass its clean Git checkout path and omit `--ref`. Source is not
@@ -67,11 +66,13 @@ The private workspace must be outside framework/source checkouts. Keep all findi
 cloud identities and generated packages private. A package may contain sensitive
 business information even though it excludes raw AWS exports and credentials.
 
+Copy [the Claude model settings example](../examples/config/claude-settings.example.json) outside the checkout if you need explicit overrides.
+
 `--settings /path/to/private-settings.json` accepts the settings documented in the
 [legacy adapter guide](kiro-automation.md), including model names, byte limits,
 maximum invocations/rounds, MCP command and optional findings output location.
 `wireframes_model` selects the UI model; reviewer/executor models are separate.
-Default executor is Kiro; reviewer is always Claude Code in this POC. The executor
+Default executor and reviewer use Claude Code in separate sessions, pinned to `claude-sonnet-5-5` and `claude-opus-5-5` respectively. The CLI rejects identical model IDs and aliases for this pair, passes each ID explicitly, and rejects replies whose model-usage metadata does not match. Available versions depend on provider/account access. Kiro remains an optional executor via `--executor kiro`; it is not required for AWS MCP. The reviewer is always Claude Code in this POC. The executor
 may also be `claude` or `codex`. Different sessions/providers do not prove independence
 of reasoning or correctness. Limits bound CLI invocations, not total provider tokens
 or cloud dollars. There is no hard financial cap.
@@ -165,8 +166,7 @@ service tasks before confirming:
 ## 4. Validate and prepare
 
 Install/authenticate the selected provider CLIs separately. Kiro headless requires
-its own configured CLI and credentials; the IDE alone is insufficient. Claude Code
-reviewer uses noninteractive bare mode with built-in/MCP tools disabled. Codex uses
+its own configured CLI and credentials; the IDE alone is insufficient. Claude Code uses your subscription login in noninteractive mode, with settings discovery, hooks, skills and MCP integrations disabled and no built-in tools. Unlike bare mode, this supports Claude Max authentication. Global instructions or managed policy may still apply; provider isolation must be acceptance-tested. Codex uses
 noninteractive read-only mode, disables known execution/search/agent integrations,
 and rejects unexpected tool events. These flags must be acceptance-tested against
 installed versions; they are not an OS-level isolation guarantee. No cloud authority
@@ -279,3 +279,5 @@ Official integration references:
 [Claude Code CLI](https://code.claude.com/docs/en/cli-reference),
 [Codex noninteractive execution](https://learn.chatgpt.com/docs/non-interactive-mode),
 [AWS Transform developer tools](https://docs.aws.amazon.com/transform/latest/userguide/developer-tools.html).
+
+Model selection reference: [Claude Code model configuration](https://code.claude.com/docs/en/model-config). Different Claude models can still share blind spots; source checks and human gates remain required.

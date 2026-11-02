@@ -280,7 +280,8 @@ class PreparationTests(unittest.TestCase):
             models.call('claude', {'settings': kw.DEFAULTS, 'model_calls':1}, self.work, 'reviewer', '{}')
         command = process.call_args[0][0]
         self.assertEqual(command[command.index('--tools') + 1], '')
-        self.assertIn('--bare', command)
+        self.assertNotIn('--bare', command)
+        self.assertIn('--strict-mcp-config', command)
         self.assertIn('mcp__*', command)
 
     def test_completed_aws_job_stops_before_agents(self):
@@ -384,6 +385,22 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(result, 2)
         self.assertEqual(saved['pipeline']['calls'], 1)
         self.assertEqual(saved['stage'], 'WAITING_FOR_RUNTIME')
+
+    def test_same_claude_models_rejected(self):
+        with self.assertRaisesRegex(pilot.Blocked, 'different Claude models'):
+            app.validate_model_pair('claude', {'executor_model':'claude-sonnet-5-5', 'reviewer_model':'claude-sonnet-5-5'})
+        with self.assertRaisesRegex(pilot.Blocked, 'full model IDs'):
+            app.validate_model_pair('claude', {'executor_model':'sonnet', 'reviewer_model':'opus'})
+
+    def test_claude_fallback_model_is_rejected(self):
+        class Process:
+            returncode = 0
+            def communicate(self, *a, **kw):
+                return json.dumps({'modelUsage':{'claude-sonnet-5-5':{}}, 'result':'{}'}), ''
+        settings = dict(kw.DEFAULTS, reviewer_model='claude-opus-5-5')
+        with patch.object(models.shutil, 'which', return_value='/fixture/claude'), patch.object(models.subprocess, 'Popen', return_value=Process()):
+            with self.assertRaisesRegex(pilot.Blocked, 'model identity'):
+                models.call('claude', {'settings':settings, 'model_calls':1}, self.work, 'reviewer', '{}')
 
     def test_codex_unexpected_tool_event_rejected(self):
         class Process:
