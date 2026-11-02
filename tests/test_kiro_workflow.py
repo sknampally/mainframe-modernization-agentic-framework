@@ -1,0 +1,335 @@
+"""Offline orchestration tests. Fixtures are not real Kiro/AWS execution evidence."""
+import argparse
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+SCRIPTS = Path(__file__).parents[1] / 'scripts'
+sys.path.insert(0, str(SCRIPTS))
+import kiro_workflow as flow
+import pilot
+
+
+class WorkflowTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.source = self.root / 'source'
+        self.source.mkdir()
+        (self.source / 'rule.cbl').write_text('IF AMOUNT = ZERO\n MOVE 1 TO ERROR-FLAG\nEND-IF\n')
+        self.workspace = self.root / 'workspace'
+        self.workspace.mkdir()
+        self.assessment = self.root / 'findings'
+        self.assessment.mkdir()
+        (self.assessment / 'rules.json').write_text('{"candidates":["reject zero amount"]}')
+        self.commit = 'a' * 40
+        self.dirty = False
+        def git(root, *args):
+            if args == ('rev-parse', 'HEAD'): return self.commit
+            if args == ('remote', 'get-url', 'origin'): return 'https://example.invalid/source.git'
+            if args == ('status', '--porcelain'): return ' M rule.cbl' if self.dirty else ''
+            if args[0] == 'ls-files': return 'rule.cbl' if len(args) == 1 or args[-1] == 'rule.cbl' else ''
+            raise AssertionError(args)
+        for module in [flow, pilot]:
+            mock = patch.object(module, 'git', side_effect=git)
+            mock.start()
+            self.addCleanup(mock.stop)
+        args = argparse.Namespace(source=str(self.source), workspace=str(self.workspace), settings=None,
+                                  objective='Validate one rule', assessment=str(self.assessment))
+        self.directory = flow.initialize(args)
+        self.messages = []
+
+    def load(self): return json.loads((self.directory / 'run.json').read_text())
+    def store(self, value): flow.private_save(self.directory / 'run.json', value)
+    def scripted(self, replies):
+        remaining = iter(replies)
+        def runtime(run, directory, role, message):
+            self.messages.append((role, json.loads(message)))
+            return next(remaining)
+        return runtime
+
+    def candidate(self):
+        return {'kind': 'candidate', 'specification': 'Fixture candidate: reject zero amount; no runtime proof.',
+                'traceability': [{'rule_id': 'R1', 'source_path': 'rule.cbl', 'source_anchor': 'lines 1-3',
+                    'scenario_id': str(i), 'expected_result': 'Source-derived fixture expectation',
+                    'oracle': 'rule.cbl lines 1-3', 'status': 'NOT RUN'} for i in range(3)]}
+
+    def read(self): return {'kind': 'read', 'area': 'source', 'paths': ['rule.cbl']}
+    def review(self, decision='PASS'):
+        return {'kind': 'review', 'decision': decision, 'report': 'Independent fixture inspection.',
+                'findings': [] if decision == 'PASS' else [{'id': 'F1', 'severity': 'high', 'correction': 'Fix oracle'}]}
+
+    def test_two_roles_and_automatic_handshake(self):
+        result = flow.drive(self.directory, runtime=self.scripted([self.read(), self.candidate(), self.read(), self.review()]))
+        self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
+        self.assertEqual([x[0] for x in self.messages], ['executor', 'executor', 'reviewer', 'reviewer'])
+        self.assertNotIn('candidate', self.messages[0][1])
+        self.assertIn('candidate', self.messages[2][1])
+        self.assertEqual(self.messages[2][1]['history'], [])
+        self.assertFalse(result['human_approved'])
+
+    def test_rework_is_routed_without_user_prompt(self):
+        replies = [self.read(), self.candidate(), self.read(), self.review('REWORK'),
+                   self.read(), self.candidate(), self.read(), self.review()]
+        result = flow.drive(self.directory, runtime=self.scripted(replies))
+        self.assertEqual(result['round'], 2)
+        self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
+        self.assertIn('previous_review', self.messages[4][1])
+        self.assertTrue((self.directory / 'candidate-1.json').exists())
+        self.assertTrue((self.directory / 'candidate-2.json').exists())
+
+    def test_reviewer_cannot_skip_independent_source_read(self):
+        result = flow.drive(self.directory, runtime=self.scripted([self.read(), self.candidate(), self.review()]))
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertIn('independently', result['reason'])
+
+    def test_total_call_budget_survives_resume(self):
+        run = self.load(); run['settings']['max_model_calls'] = 1; self.store(run)
+        result = flow.drive(self.directory, runtime=self.scripted([self.read()]))
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertEqual(self.load()['model_calls'], 1)
+        self.assertIn('budget exhausted', result['reason'])
+
+    def test_candidate_changed_before_review_blocks(self):
+        run = self.load(); flow.collect_assessment(run, self.directory, str(self.assessment))
+        runtime = self.scripted([self.read(), self.candidate()])
+        flow.agent_step(run, self.directory, runtime); flow.agent_step(run, self.directory, runtime)
+        (self.directory / 'candidate-1.json').write_text('{}')
+        with self.assertRaisesRegex(flow.Blocked, 'changed after handoff'):
+            flow.agent_step(run, self.directory, runtime)
+
+    def test_scope_escape_is_rejected(self):
+        run = self.load()
+        with self.assertRaisesRegex(flow.Blocked, 'Rejected path'):
+            flow.source_read(run, self.directory, 'executor', {'paths': ['../private.txt']})
+
+    def test_partial_source_reads_keep_original_line_numbers(self):
+        run = self.load()
+        result = flow.source_read(run, self.directory, 'executor', {'paths':['rule.cbl'], 'start':2, 'end':3})
+        self.assertTrue(result[0]['text'].startswith('2:'))
+        self.assertNotIn('1: IF', result[0]['text'])
+
+    def test_changed_source_never_reaches_agent(self):
+        self.dirty = True
+        result = flow.drive(self.directory, runtime=lambda *args: self.fail('Agent must not run'))
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertIn('not clean', result['reason'])
+
+    def test_runtime_setup_is_resumable(self):
+        def unavailable(*args): raise flow.RuntimeUnavailable('Authenticate and resume')
+        first = flow.drive(self.directory, runtime=unavailable)
+        self.assertEqual(first['status'], 'WAITING_FOR_RUNTIME')
+        result = flow.drive(self.directory, runtime=self.scripted([self.read(), self.candidate(), self.read(), self.review()]))
+        self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
+        self.assertEqual(result['model_calls'], 5)
+
+    def test_import_rejects_oversized_assessment(self):
+        run = self.load(); run['settings']['max_assessment_bytes'] = 1
+        with self.assertRaisesRegex(flow.Blocked, 'byte limit'):
+            flow.collect_assessment(run, self.directory, str(self.assessment))
+
+    def test_nested_aws_envelope_and_error(self):
+        envelope = {'content':[{'type':'text','text':json.dumps({'success':True,'data':{'job':{'jobId':'fixture-job'}}})}], 'isError':False}
+        self.assertEqual(flow.unwrap_mcp(envelope)['job']['jobId'], 'fixture-job')
+        with self.assertRaises(flow.Blocked): flow.unwrap_mcp({'success':False,'error':{'code':'AUTH'}})
+
+    def prepare_job(self):
+        run = self.load(); run['assessment_input'] = None
+        run['settings']['transform'] = {'workspace_id':'fixture-workspace'}
+        run['job_id'] = 'fixture-job'
+        self.store(run)
+        return run
+
+    def test_aws_job_wait_and_resume_reuses_job(self):
+        self.prepare_job()
+        class Client:
+            def __init__(self): self.names = []
+            def calls(self, requests):
+                self.names += [x[0] for x in requests]
+                return [{}, {'job':{'jobId':'fixture-job','status':'RUNNING'}}]
+        client = Client()
+        first = flow.drive(self.directory, transform=client)
+        second = flow.drive(self.directory, transform=client)
+        self.assertEqual(first['status'], 'WAITING_FOR_ASSESSMENT')
+        self.assertEqual(second['status'], 'WAITING_FOR_ASSESSMENT')
+        self.assertNotIn('create_job', client.names)
+        self.assertEqual(self.load()['job_id'], 'fixture-job')
+
+    def test_aws_human_input_is_not_auto_submitted(self):
+        self.prepare_job()
+        class Client:
+            def calls(self, requests):
+                assert [x[0] for x in requests] == ['load_instructions','get_job_status']
+                return [{}, {'job':{'jobId':'fixture-job','status':'AWAITING_HUMAN_INPUT'}}]
+        result = flow.drive(self.directory, transform=Client())
+        self.assertEqual(result['status'], 'WAITING_FOR_HUMAN')
+
+    def test_unknown_creation_never_retries_create(self):
+        run = self.prepare_job(); run['job_id'] = None; run['create_pending'] = True; self.store(run)
+        class Client:
+            def calls(self, requests): raise AssertionError('Must not call service on uncertain creation')
+        result = flow.drive(self.directory, transform=Client())
+        self.assertEqual(result['status'], 'NEEDS_RECONCILIATION')
+
+    def test_receipted_creation_recovers_without_duplicate(self):
+        run = self.prepare_job(); run['job_id'] = None; run['create_pending'] = True; self.store(run)
+        flow.private_save(self.directory / 'create-job-receipt.json', {'job':{'jobId':'fixture-job'}})
+        class Client:
+            def calls(self, requests):
+                assert all(name != 'create_job' for name, _ in requests)
+                return [{}, {'job':{'jobId':'fixture-job','status':'RUNNING'}}]
+        result = flow.drive(self.directory, transform=Client())
+        self.assertEqual(result['status'], 'WAITING_FOR_ASSESSMENT')
+        self.assertEqual(self.load()['job_id'], 'fixture-job')
+
+    def test_new_assessment_is_created_once_and_receipted(self):
+        run = self.prepare_job(); run['job_id'] = None
+        run['settings']['allow_new_assessments'] = True
+        run['settings']['transform']['upload_prefix'] = 's3://fixture-bucket/private-inputs'
+        self.store(run)
+        class Client:
+            def __init__(self): self.created = 0
+            def calls(self, requests):
+                results = []
+                for name, arguments in requests:
+                    if name == 'create_job':
+                        self.created += 1
+                        assert 'source.zip' in arguments['objective']
+                        results.append({'job':{'jobId':'fixture-job'}})
+                    elif name == 'get_job_status':
+                        results.append({'job':{'jobId':'fixture-job','status':'RUNNING'}})
+                    else: results.append({})
+                return results
+        client = Client()
+        completed = type('Result', (), {'returncode':0})()
+        with patch.object(flow.subprocess, 'run', return_value=completed):
+            first = flow.drive(self.directory, transform=client)
+            second = flow.drive(self.directory, transform=client)
+        self.assertEqual(client.created, 1)
+        self.assertEqual(first['status'], 'WAITING_FOR_ASSESSMENT')
+        self.assertEqual(second['status'], 'WAITING_FOR_ASSESSMENT')
+        self.assertTrue((self.directory / 'create-job-receipt.json').is_file())
+
+    def test_uncertain_new_creation_is_not_repeated(self):
+        run = self.prepare_job(); run['job_id'] = None
+        run['settings']['allow_new_assessments'] = True
+        run['settings']['transform']['upload_prefix'] = 's3://fixture-bucket/private-inputs'
+        self.store(run)
+        class Client:
+            def __init__(self): self.created = 0
+            def calls(self, requests):
+                if requests[0][0] == 'create_job':
+                    self.created += 1
+                    raise flow.Blocked('Connection lost after request')
+                return [{}]
+        client = Client()
+        completed = type('Result', (), {'returncode':0})()
+        with patch.object(flow.subprocess, 'run', return_value=completed):
+            first = flow.drive(self.directory, transform=client)
+            second = flow.drive(self.directory, transform=client)
+        self.assertEqual(client.created, 1)
+        self.assertEqual(first['status'], 'NEEDS_RECONCILIATION')
+        self.assertEqual(second['status'], 'NEEDS_RECONCILIATION')
+
+    def test_poll_watcher_returns_without_stopping_aws_job(self):
+        run = self.prepare_job(); run['settings']['max_polls_per_resume'] = 2; self.store(run)
+        class Client:
+            def __init__(self): self.polls = 0
+            def calls(self, requests):
+                self.polls += 1
+                assert all(name != 'control_job' for name, _ in requests)
+                return [{}, {'job':{'jobId':'fixture-job','status':'RUNNING'}}]
+        client = Client()
+        with patch.object(flow.time, 'sleep'):
+            result = flow.drive(self.directory, wait=True, transform=client)
+        self.assertEqual(client.polls, 2)
+        self.assertEqual(result['status'], 'WAITING_FOR_ASSESSMENT')
+
+    def test_real_subprocess_adapter_has_tool_free_profiles(self):
+        run = self.load(); run['model_calls'] = 1
+        program = 'import sys; sys.stdin.read(); print(\'{"kind":"blocked","reason":"fixture only"}\')'
+        run['settings']['kiro_command'] = [sys.executable, '-c', program]
+        with patch.dict(flow.os.environ, {'KIRO_API_KEY':'offline-fixture-value'}):
+            result = flow.kiro_call(run, self.directory, 'executor', 'Synthetic fixture context')
+        self.assertEqual(result['kind'], 'blocked')
+        profile = json.loads((self.directory / 'runtime/executor/.kiro/agents/modernization-executor.json').read_text())
+        self.assertEqual(profile['tools'], [])
+        self.assertFalse(profile['includeMcpJson'])
+        self.assertFalse(profile['includePowers'])
+        self.assertEqual(profile['permissions']['rules'][0]['effect'], 'deny')
+
+    def test_completed_assessment_drives_agents_automatically(self):
+        run = self.prepare_job()
+        run['settings']['transform']['output_location'] = str(self.assessment)
+        self.store(run)
+        class Client:
+            def calls(self, requests): return [{}, {'job':{'jobId':'fixture-job','status':'COMPLETED'}}]
+        result = flow.drive(self.directory, transform=Client(),
+            runtime=self.scripted([self.read(),self.candidate(),self.read(),self.review()]))
+        self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
+        self.assertEqual(self.load()['job_id'], 'fixture-job')
+
+    def test_s3_findings_are_imported_without_creating_a_job(self):
+        run = self.load(); run['assessment_input'] = 's3://fixture-bucket/findings/'
+        self.store(run)
+        calls = []
+        def aws(command, **kwargs):
+            calls.append(command)
+            if 'list-objects-v2' in command:
+                payload = {'Contents':[{'Key':'findings/rule.json','Size':20}]}
+            elif 'get-object' in command:
+                Path(command[-1]).write_text('{"candidate":"fixture"}')
+                payload = {'ContentLength':23}
+            else: raise AssertionError(command)
+            return type('Result', (), {'returncode':0, 'stdout':json.dumps(payload)})()
+        with patch.object(flow.subprocess, 'run', side_effect=aws):
+            result = flow.drive(self.directory,
+                runtime=self.scripted([self.read(),self.candidate(),self.read(),self.review()]))
+        self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
+        self.assertEqual(self.load()['job_id'], None)
+        self.assertTrue(all(command[:2] == ['aws','s3api'] for command in calls))
+
+    def test_auto_export_uses_only_returned_artifact_identifiers(self):
+        run = self.prepare_job()
+        class Client:
+            def calls(self, requests):
+                if any(name == 'get_job_status' for name, _ in requests):
+                    return [{}, {'job':{'jobId':'fixture-job','status':'COMPLETED'}}]
+                if any(name == 'list_resources' for name, _ in requests):
+                    return [{}, {'artifacts':[{'artifactId':'returned-fixture-artifact'}]}]
+                for name, args in requests:
+                    if name == 'get_resource':
+                        assert args['artifactId'] == 'returned-fixture-artifact'
+                        (Path(args['savePath']) / args['fileName']).write_text('Source rule findings fixture')
+                return [{} for _ in requests]
+        result = flow.drive(self.directory, transform=Client(),
+            runtime=self.scripted([self.read(),self.candidate(),self.read(),self.review()]))
+        self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
+        self.assertTrue((self.directory / 'assessment/finding-0.txt').is_file())
+
+    def test_model_subprocess_timeout_is_terminated_and_resumable(self):
+        run = self.load(); run['model_calls'] = 1
+        run['settings']['call_timeout_seconds'] = 1
+        run['settings']['kiro_command'] = [sys.executable, '-c', 'import time; time.sleep(10)']
+        with patch.dict(flow.os.environ, {'KIRO_API_KEY':'offline-fixture-value'}):
+            with self.assertRaisesRegex(flow.RuntimeUnavailable, 'terminated'):
+                flow.kiro_call(run, self.directory, 'executor', 'Synthetic fixture context')
+        self.assertTrue((self.directory / 'model-1-timeout.json').exists())
+
+    def test_malformed_agent_reply_never_becomes_pass(self):
+        with self.assertRaises(ValueError): flow.json_reply('I approve this without a JSON review.')
+        with self.assertRaises(flow.Blocked): flow.json_reply('{"kind":"shell","command":"anything"}')
+
+    def test_technical_pass_with_findings_is_rejected(self):
+        review = self.review('REWORK'); review['decision'] = 'PASS'
+        result = flow.drive(self.directory, runtime=self.scripted([self.read(),self.candidate(),self.read(),review]))
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertIn('no open findings', result['reason'])
+
+
+if __name__ == '__main__': unittest.main()

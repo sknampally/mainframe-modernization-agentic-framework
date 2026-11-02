@@ -21,3 +21,4 @@ __pycache__/
 # Operational pilot records belong outside this checkout.
 /evidence/
 /local-pilots/
+/runs/

@@ -1,6 +1,6 @@
 # Limitations and evidence discipline
 
-This foundation supplies documentation, phase guides, copyable prompts, role contracts, and manual templates. The prompts have not been validated in an end-to-end pilot and are not installed skills. A local source-validation runner now manages a task manifest, metered operations, artifact sealing, and reviewer preflight. There is no model dispatch, editor-wide tool enforcement, cloud infrastructure, migration toolchain, .NET implementation, or automated equivalence harness.
+This foundation supplies documentation, phase guides, copyable prompts, role contracts, and manual templates. The prompts have not been validated in an end-to-end pilot and are not installed skills. A local source-validation runner now manages a task manifest, metered operations, artifact sealing, and reviewer preflight. A separate Kiro controller now implements role dispatch, automatic handoff/rework, assessment import, and an AWS MCP job adapter. Its live integration is not verified; tests use fixtures. It provisions no IAM, buckets, connectors, or workspaces and provides no .NET implementation or equivalence harness. CLI invocation limits are not hard dollar caps.
 
 The private assessment history is reported context, not reproducible public evidence. Tool-reported completion is not independently verified correctness. Test planning remained a draft in that history, and decomposition did not establish complete domain assignment. No private metrics, inventories, exports, resource identifiers, or execution metadata are republished.
 

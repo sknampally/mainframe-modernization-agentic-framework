@@ -2,7 +2,7 @@
 
 An evidence-driven reference framework for modernizing mainframe applications to C#/.NET, with independent review and human-controlled delivery gates.
 
-**Status: reference framework with a local source-validation pilot runner.** This repository does not yet contain an executable orchestrator, AWS Transform adapter, generated .NET application, or an equivalence test harness. The pilot runner manages local task records, bounded operations, and handoff integrity; it does not call models. It makes no production-readiness or migration-success claim.
+**Status: reference framework with a local pilot runner and Kiro workflow controller.** The controller implements two-role handoffs/rework, existing local/S3 assessment input, and a resumable AWS Transform job adapter. Offline checks pass; live Kiro/AWS integration is not yet verified. There is no generated .NET application or equivalence harness, and no production-readiness or migration-success claim.
 
 ## Why this framework exists
 
@@ -12,9 +12,9 @@ Generated documentation is useful input, but it does not prove business behavior
 
 | Capability | Evidence status | Public repository status |
 | --- | --- | --- |
-| CardDemo assessment and draft test planning with AWS Transform | Reported in a prior private workflow; not independently reproduced here | Sanitized lessons only; no raw outputs |
+| AWS Transform assessment | Prior assessment reported; new adapter tested with fixtures, not live AWS | Existing local/S3 input or new job with persisted identity and resume |
 | Business-rule validation against pinned source | Required next step; not demonstrated here | Phase guide, rule-validation prompt, and review contract |
-| Executor/reviewer/orchestrator collaboration | Proposed automation | Role contracts, manual task prompts, and workflow diagrams |
+| Executor/reviewer coordination | Kiro controller implemented; offline fixtures verified, live run pending | Automatic source requests, candidate handoff, review, and bounded rework |
 | .NET generation, data conversion, and equivalence | Not demonstrated | Delivery and acceptance methodology |
 | Deployment, rollback, and autonomous operation | Not demonstrated | Human approval boundaries only |
 
@@ -60,7 +60,7 @@ flowchart LR
 
 Arrows describe intended responsibilities, not implemented integrations. The executor hands its candidate to the reviewer; the reviewer checks it against independently accessed pinned source and private evidence. Both the candidate and the review are required at the quality gate. A reviewer recommends technical acceptance; a human authorizes the next action. Missing evidence blocks advancement until resolved. The [detailed workflow](architecture/multi-agent-workflow.md) shows the execution/review sequence, rework, escalation, and approval invalidation.
 
-C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Stable [task prompts](prompts/README.md) consume one shared local manifest. The [pilot runner](docs/running-a-pilot.md) manages evidence paths and handoff checks. Installed skills, an executable skill library, and model orchestration remain future work.
+C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Stable [task prompts](prompts/README.md) consume one shared local manifest. The [pilot runner](docs/running-a-pilot.md) manages evidence paths and handoff checks. Installed skills and an executable skill library remain future work. Kiro role orchestration is implemented in the separate controller; live integration remains unverified.
 
 ## Start here
 
@@ -75,17 +75,19 @@ The six phase guides and copyable prompts are available now. Use them with a sha
 | 5 | [Incremental implementation](methodology/05-implementation.md) |
 | 6 | [Equivalence testing and release readiness](methodology/06-equivalence-testing.md) |
 
-**Next practical step:** [initialize one local pilot task](docs/running-a-pilot.md), then give the unchanged [pilot instructions](prompts/04-rule-validation-pilot.md) and manifest path to an executor. After it seals the candidate, give the unchanged [review instructions](prompts/02-independent-reviewer.md) and SAME manifest path to a separate session. Do not rewrite prompts or copy artifacts between workspaces.
+**Automated path:** follow [Kiro automation setup](docs/kiro-automation.md). Configure runtime/AWS access once; supply source plus optional local/S3 findings. The controller starts the two roles and manages their handshake. Omit findings to request a new authorized AWS assessment, then return later with `resume`.
+
+**Manual diagnostic path:** the [pilot runner](docs/running-a-pilot.md) remains available for inspecting individual role operations. It is not the default fully coordinated workflow.
 
 1. Read the [methodology](methodology/modernization.md) and [quality gates](quality-gates/README.md).
 2. Define a bounded task using the [task contract](contracts/task-contract.yaml).
-3. Assign the [orchestrator](agents/orchestrator.md), [executor](agents/executor.md), and [reviewer](agents/independent-reviewer.md) responsibilities. A person can perform each role today; automated coordination is future work.
+3. Assign the [orchestrator](agents/orchestrator.md), [executor](agents/executor.md), and [reviewer](agents/independent-reviewer.md) responsibilities. The Kiro controller dispatches the pilot roles; people can also use the manual role instructions.
 4. Walk through the [synthetic CardDemo skeleton](examples/carddemo/README.md). Pin upstream source before making source-specific claims.
 5. Record evidence, unresolved gaps, review results, and human decisions. Missing evidence blocks the relevant gate.
 
 ## Repository map
 
-The current foundation contains the following files. The directory tree is documentation structure, not evidence that the proposed automation is implemented.
+The current foundation contains the following files. The tree includes documentation and the initial controllers; code presence does not establish live-service acceptance.
 
 ```text
 mainframe-modernization-agentic-framework/
@@ -112,7 +114,10 @@ mainframe-modernization-agentic-framework/
 │   ├── 01-executor.md
 │   ├── 02-independent-reviewer.md
 │   ├── 03-orchestrator.md
-│   └── 04-rule-validation-pilot.md
+│   ├── 04-rule-validation-pilot.md
+│   └── automated/
+│       ├── executor.md
+│       └── reviewer.md
 ├── agents/
 │   ├── orchestrator.md
 │   ├── executor.md
@@ -125,16 +130,24 @@ mainframe-modernization-agentic-framework/
 ├── quality-gates/
 │   └── README.md
 ├── examples/
+│   ├── config/
+│   │   └── kiro-settings.example.json
 │   └── carddemo/
 │       ├── README.md
 │       └── synthetic-example.md
 ├── scripts/
-│   └── pilot.py
+│   ├── pilot.py
+│   └── kiro_workflow.py
 ├── tests/
-│   └── test_pilot.py
+│   ├── test_pilot.py
+│   ├── test_kiro_workflow.py
+│   ├── test_mcp_transport.py
+│   └── fixtures/
+│       └── mcp_server.py
 └── docs/
     ├── images/
     │   └── reference-architecture.svg
+    ├── kiro-automation.md
     ├── limitations.md
     └── running-a-pilot.md
 ```
@@ -147,7 +160,8 @@ Installed `skills/` and `docs/lessons-learned.md` remain future additions; they 
 | [methodology](methodology/modernization.md) | Discovery through cutover and rollback |
 | [agents](agents/orchestrator.md) | Bounded role instructions |
 | [prompts](prompts/README.md) | Stable role instructions consuming one task manifest |
-| [pilot runner](docs/running-a-pilot.md) | Initialization, metered reads, sealed evidence, and review preflight |
+| [Kiro automation](docs/kiro-automation.md) | Start/resume, existing or new assessments, two-role handoff and rework |
+| [pilot runner](docs/running-a-pilot.md) | Manual diagnostic operations and record-integrity checks |
 | [contracts](contracts/README.md) | Task, review, and approval record templates |
 | [quality-gates](quality-gates/README.md) | Evidence required to advance |
 | [examples/carddemo](examples/carddemo/README.md) | Sanitized case-study skeleton and synthetic example |
@@ -157,9 +171,9 @@ Installed `skills/` and `docs/lessons-learned.md` remain future additions; they 
 ## Delivery roadmap
 
 - Foundation: method, roles, gates, diagrams, public boundaries, phase guides, and stable prompts are supplied.
-- Local pilot runner: shared manifest, metered operations, sealing, and review preflight are implemented; broader model orchestration remains future work.
+- Local pilot runner: shared manifest, metered operations, sealing, and review preflight are implemented for manual diagnostics.
 - Validation pilot: pin public source and validate one rule with independently reviewed evidence.
-- Automation pilot: implement and test one task adapter, durable state, bounded retries, and approval enforcement.
+- Kiro controller: two-role dispatch, bounded rework, saved state, and AWS adapter implemented; real Kiro/AWS acceptance run pending.
 - Implementation pilot: build one vertical .NET slice with measured equivalence and failure-path tests.
 - Operational pilot: rehearse migration, recovery, observability, and rollback before any release claim.
 

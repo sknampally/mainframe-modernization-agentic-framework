@@ -1,5 +1,7 @@
 # Reusable pilot prompts
 
+For automated Kiro execution, use the [workflow controller](../docs/kiro-automation.md). It owns the handshake and uses the structured [executor](automated/executor.md) and [reviewer](automated/reviewer.md) protocols. The instructions below are the manual diagnostic path.
+
 Use the prompts unchanged. Each role receives **one local task-manifest path**, not a rewritten prompt containing paths, hashes, and findings. The small [pilot runner](../scripts/pilot.py) creates the shared record, meters its own operations, seals executor artifacts, and checks reviewer prerequisites.
 
 ## Start once
