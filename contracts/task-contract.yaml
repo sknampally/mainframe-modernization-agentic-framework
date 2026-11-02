@@ -1,0 +1,32 @@
+# Proposed record format; all example IDs and references are synthetic.
+contract_version: 1
+task_id: REQUIRED
+evidence_classification: REQUIRED
+objective: REQUIRED
+in_scope: [] # REQUIRED: enumerate bounded work
+out_of_scope: []
+input_baseline:
+  source_repository: REQUIRED
+  source_commit: REQUIRED
+  evidence_manifest_revision: REQUIRED
+roles:
+  executor: REQUIRED
+  reviewer: REQUIRED
+  human_owner: REQUIRED
+allowed_tools: [] # Empty means no tool use authorized
+allowed_actions: [] # Empty means no external mutation authorized
+acceptance_criteria: [] # REQUIRED: measurable conditions and evidence
+required_gate: REQUIRED
+budget:
+  max_execution_attempts: 2
+  max_tool_calls: 20
+  max_cost: REQUIRED
+  currency: REQUIRED
+  deadline: REQUIRED
+outputs:
+  candidate_revision: REQUIRED
+  evidence_references: []
+  test_results: []
+  unresolved_findings: []
+on_missing_evidence: BLOCKED
+on_budget_exhaustion: BLOCKED

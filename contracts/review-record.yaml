@@ -1,0 +1,14 @@
+# Proposed record format; populate only from actual review.
+contract_version: 1
+task_id: REQUIRED
+reviewer: REQUIRED
+candidate_revision: REQUIRED
+input_baseline_revision: REQUIRED
+decision: REQUIRED # PASS | REWORK | BLOCKED
+checks_performed: [] # REQUIRED: evidence refs and actual observations
+checks_not_performed: []
+findings: [] # Each: id, severity, evidence, impact, correction, status
+remaining_uncertainty: []
+reviewed_at: REQUIRED
+# PASS requires relevant criteria met and no unresolved critical/high findings.
+# This record never authorizes a human-controlled action.
