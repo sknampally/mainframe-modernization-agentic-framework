@@ -4,7 +4,7 @@ Purpose: implement one reviewable vertical slice without losing its evidence cha
 
 ## Inputs and prerequisites
 
-Validated slice requirements, approved architecture and UI/data contracts, synthetic fixtures, accepted test oracles, allowed tools/actions, and a bounded task. Use the [executor prompt](../prompts/01-executor.md).
+Validated slice requirements, approved architecture and UI/data contracts, synthetic fixtures, accepted test oracles, allowed tools/actions, and a bounded task. Use the [executor role contract](../agents/executor.md).
 
 ## Procedure
 
@@ -13,7 +13,7 @@ Validated slice requirements, approved architecture and UI/data contracts, synth
 3. Add meaningful tests for positive, rejection, boundary, and applicable recovery paths. Keep expected results independent from implementation logic.
 4. Run the relevant build, tests, static analysis, and dependency/security checks in the approved environment. Report commands, versions, exit status, failures, skips, and result locations privately as appropriate.
 5. Submit a candidate revision with requirement-to-code-to-test links, actual results, assumptions, and unresolved findings. If checks cannot run, explain why and leave their acceptance criteria unproven.
-6. Have the [reviewer](../prompts/02-independent-reviewer.md) inspect source, candidate, and tests independently. Fix findings on a new revision; re-review material changes.
+6. Have the [reviewer role](../agents/independent-reviewer.md) inspect source, candidate, and tests independently. Fix findings on a new revision; re-review material changes.
 7. Verify personal GitHub attribution before commits and use a feature branch/PR. The human owner reviews and merges; no direct main push.
 
 ## Deliverables

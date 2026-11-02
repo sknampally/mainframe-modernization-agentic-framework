@@ -1,6 +1,6 @@
 # Multi-agent workflow and trust boundaries
 
-**Design proposal.** No scheduler, model router, reviewer isolation, approval service, or cloud adapter is implemented in this foundation.
+**Full delivery design proposal.** A local [Kiro controller](../docs/kiro-automation.md) implements a bounded source-validation slice: separate role contexts, handoff/rework, persistent state, and an AWS assessment adapter. Offline tests pass; live integration is pending. There is no model router, OS-level isolation, approval service, or production delivery pipeline.
 
 ## Executor and reviewer loop
 

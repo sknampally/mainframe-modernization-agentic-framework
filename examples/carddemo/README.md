@@ -1,5 +1,10 @@
 # CardDemo case-study skeleton
 
+For the new preparation POC, use the [four-phase CLI](../../docs/cli-guide.md) and
+[repeatability experiment](../../docs/assessment-comparison.md). Pin a reviewed
+CardDemo commit and begin with the sign-on journey. Two fresh AWS assessments must
+retain separate private outputs. No live result is bundled or claimed here.
+
 **Status: sanitized skeleton, not a reproducible modernization result.** No CardDemo application source, data, AWS Transform export, cloud resource configuration, private inventory, or private evidence link is included.
 
 Public upstream: [AWS CardDemo](https://github.com/aws-samples/aws-mainframe-modernization-carddemo). Consult its own license and notices before reuse. This framework links to upstream rather than redistributing it.

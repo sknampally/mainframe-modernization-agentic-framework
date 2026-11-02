@@ -1,0 +1,23 @@
+{
+  "kiro_command": ["kiro-cli"],
+  "executor_model": null,
+  "reviewer_model": null,
+  "max_model_calls": 16,
+  "max_rounds": 2,
+  "call_timeout_seconds": 600,
+  "max_context_bytes": 180000,
+  "max_read_bytes": 50000,
+  "max_assessment_bytes": 10000000,
+  "max_source_upload_bytes": 100000000,
+  "poll_seconds": 60,
+  "max_polls_per_resume": 120,
+  "allow_new_assessments": false,
+  "transform": {
+    "command": ["uvx", "awslabs.aws-transform-mcp-server@latest"],
+    "timeout_seconds": 180,
+    "workspace_id": "SET_EXISTING_WORKSPACE_LOCALLY",
+    "upload_prefix": "SET_PRIVATE_S3_PREFIX_LOCALLY",
+    "orchestrator_agent": null,
+    "output_location": null
+  }
+}
