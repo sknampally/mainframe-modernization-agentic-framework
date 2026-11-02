@@ -1,45 +1,18 @@
-# One-rule validation pilot prompt
+# Manifest-driven one-rule validation pilot
 
-This is the next practical step after a reviewed discovery baseline. It produces a candidate specification for review, not a .NET implementation or equivalence result.
+Use the [executor prompt](01-executor.md) unchanged with one local task manifest. This specialization defines what a successful rule-validation candidate contains; it does not duplicate task paths or budgets.
 
-For CardDemo, first pin a commit from the [public upstream](https://github.com/aws-samples/aws-mainframe-modernization-carddemo). Do not use the [synthetic walkthrough](../examples/carddemo/synthetic-example.md) as source evidence. No source commit or rule is preselected here; that selection requires direct inspection.
+## Input
 
-```text
-ROLE: Executor validating one source-derived business rule.
+One `task.json` created by [pilot initialization](../docs/running-a-pilot.md). The manifest records the selected behavior, entry point, pinned source, workspace, operation/time budgets, owner, permissions, and acceptance criteria. Unresolved task identity or missing input blocks execution.
 
-TASK CONTRACT: <completed approved contract; read-only source inspection>
-PUBLIC SOURCE REPOSITORY AND COMMIT: <repository and pinned commit>
-BOUNDED BEHAVIOR: <one behavior, entry point, selected modules, exclusions>
-EVIDENCE MANIFEST AND CLASSIFICATION: <approved reference and classification>
-REVIEWER AND HUMAN OWNER: <separate reviewer and decision owner>
-BUDGET: <attempts, calls, cost, deadline>
+## Source-validation procedure
 
-Validate placeholders and prerequisites before starting. If the selected
-behavior has missing dependencies, record BLOCKED and identify what is needed.
-Do not access private assessment bundles, cloud accounts, production data,
-or external services beyond the task's explicit permissions.
+1. Begin the executor role, then inspect the selected entry point and relevant callers, copybooks, constants, and dependencies through metered runner operations.
+2. Establish one rule's preconditions, trigger, outputs/state, rejection behavior, and applicable numeric/data semantics. Cite repository, commit, source path, paragraph/symbol, and meaningful line spans.
+3. Separate inspected facts from inferred language/runtime semantics. Missing source or unavailable compiler/runtime context must remain explicit. Do not fabricate dependencies or state effects.
+4. Draft synthetic positive, rejection, and boundary cases with deterministic source-derived oracles. Assess recovery/concurrency applicability and explain exclusions. If an oracle is unresolved, label it unknown; reviewers must not PASS the affected criterion.
+5. Write the candidate and traceability CSV through the runner, keeping all cases NOT RUN. Do not use the framework's synthetic example as a source rule.
+6. Seal the artifacts within budget. The runner generates hashes and a handoff; no bespoke reviewer prompt is needed. A separate reviewer uses [the reusable review instructions](02-independent-reviewer.md) with the same manifest.
 
-1. Inspect the entry point, call context, relevant paragraphs/symbols,
-   copybooks, constants, and dependencies at the pinned source revision.
-2. Select one material rule. Document preconditions, trigger, outputs, state
-   changes, error/rejection behavior, and applicable numeric/data semantics.
-3. Cite repository, commit, file, symbol/paragraph, and meaningful line spans
-   for each material claim. Separate verified, reported, inferred, proposed,
-   and unknown claims. Do not invent missing behavior.
-4. Derive deterministic expected results from the inspected source. Draft
-   synthetic positive, rejection, and boundary cases; assess recovery and
-   concurrency applicability. Explain exclusions and unknowns.
-5. Record fixture inputs, initial state, expected outputs/state, source oracle,
-   and test status. Mark NOT RUN unless execution was explicitly permitted
-   and actually performed. Do not claim legacy/target equivalence.
-6. Return a candidate specification, rule/source/test matrix, dependency gaps,
-   checks performed, uncertainty, exact candidate revision, and a bounded
-   independent-review request. Do not generate target code in this task.
-
-Success means a reviewable candidate with inspectable source and explicit
-oracles. It is not a verified result until separate review completes. Keep
-private records outside the public repository. Publish only through a separate
-sanitized, human-reviewed PR when specifically authorized.
-```
-
-Pass the fixed candidate to the [reviewer prompt](02-independent-reviewer.md). Record its actual findings before planning implementation. If the source cannot establish the oracle, ask the domain owner for the missing decision; do not strengthen the claim by generating more tests.
+This pilot makes no legacy execution, target implementation, equivalence, publication, or release claim. For CardDemo, use a pinned revision of the public upstream selected during initialization; no private assessment export is needed.

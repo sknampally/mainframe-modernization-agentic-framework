@@ -2,7 +2,7 @@
 
 An evidence-driven reference framework for modernizing mainframe applications to C#/.NET, with independent review and human-controlled delivery gates.
 
-**Status: framework foundation — documentation, contracts, and templates.** This repository does not yet contain an executable orchestrator, AWS Transform adapter, generated .NET application, or an equivalence test harness. It makes no production-readiness or migration-success claim.
+**Status: reference framework with a local source-validation pilot runner.** This repository does not yet contain an executable orchestrator, AWS Transform adapter, generated .NET application, or an equivalence test harness. The pilot runner manages local task records, bounded operations, and handoff integrity; it does not call models. It makes no production-readiness or migration-success claim.
 
 ## Why this framework exists
 
@@ -60,11 +60,11 @@ flowchart LR
 
 Arrows describe intended responsibilities, not implemented integrations. The executor hands its candidate to the reviewer; the reviewer checks it against independently accessed pinned source and private evidence. Both the candidate and the review are required at the quality gate. A reviewer recommends technical acceptance; a human authorizes the next action. Missing evidence blocks advancement until resolved. The [detailed workflow](architecture/multi-agent-workflow.md) shows the execution/review sequence, rework, escalation, and approval invalidation.
 
-C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Manual [task prompts](prompts/README.md) are supplied. Installed skills, an executable skill library, and an orchestration engine remain future work.
+C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Stable [task prompts](prompts/README.md) consume one shared local manifest. The [pilot runner](docs/running-a-pilot.md) manages evidence paths and handoff checks. Installed skills, an executable skill library, and model orchestration remain future work.
 
 ## Start here
 
-The six phase guides and copyable prompts are available now. They are manual instructions; end-to-end execution has not been demonstrated.
+The six phase guides and copyable prompts are available now. Use them with a shared task manifest; end-to-end model-driven execution and equivalence have not been demonstrated.
 
 | Phase | Guide |
 | --- | --- |
@@ -75,7 +75,7 @@ The six phase guides and copyable prompts are available now. They are manual ins
 | 5 | [Incremental implementation](methodology/05-implementation.md) |
 | 6 | [Equivalence testing and release readiness](methodology/06-equivalence-testing.md) |
 
-**Next practical step:** complete a bounded task contract and use the [one-rule validation prompt](prompts/04-rule-validation-pilot.md) against pinned public source. Give the fixed candidate to a separate reviewer using the [review prompt](prompts/02-independent-reviewer.md). This pilot has not been run in this repository.
+**Next practical step:** [initialize one local pilot task](docs/running-a-pilot.md), then give the unchanged [pilot instructions](prompts/04-rule-validation-pilot.md) and manifest path to an executor. After it seals the candidate, give the unchanged [review instructions](prompts/02-independent-reviewer.md) and SAME manifest path to a separate session. Do not rewrite prompts or copy artifacts between workspaces.
 
 1. Read the [methodology](methodology/modernization.md) and [quality gates](quality-gates/README.md).
 2. Define a bounded task using the [task contract](contracts/task-contract.yaml).
@@ -128,10 +128,15 @@ mainframe-modernization-agentic-framework/
 │   └── carddemo/
 │       ├── README.md
 │       └── synthetic-example.md
+├── scripts/
+│   └── pilot.py
+├── tests/
+│   └── test_pilot.py
 └── docs/
     ├── images/
     │   └── reference-architecture.svg
-    └── limitations.md
+    ├── limitations.md
+    └── running-a-pilot.md
 ```
 
 Installed `skills/` and `docs/lessons-learned.md` remain future additions; they are not part of the current tree. Lessons learned require actual reviewed execution evidence.
@@ -141,7 +146,8 @@ Installed `skills/` and `docs/lessons-learned.md` remain future additions; they 
 | [architecture](architecture/multi-agent-workflow.md) | Intended workflow, trust boundaries, and recovery |
 | [methodology](methodology/modernization.md) | Discovery through cutover and rollback |
 | [agents](agents/orchestrator.md) | Bounded role instructions |
-| [prompts](prompts/README.md) | Copyable executor, reviewer, orchestrator, and rule-validation tasks |
+| [prompts](prompts/README.md) | Stable role instructions consuming one task manifest |
+| [pilot runner](docs/running-a-pilot.md) | Initialization, metered reads, sealed evidence, and review preflight |
 | [contracts](contracts/README.md) | Task, review, and approval record templates |
 | [quality-gates](quality-gates/README.md) | Evidence required to advance |
 | [examples/carddemo](examples/carddemo/README.md) | Sanitized case-study skeleton and synthetic example |
@@ -150,7 +156,8 @@ Installed `skills/` and `docs/lessons-learned.md` remain future additions; they 
 
 ## Delivery roadmap
 
-- Foundation: method, roles, gates, diagrams, public boundaries, phase guides, and manual prompts are supplied.
+- Foundation: method, roles, gates, diagrams, public boundaries, phase guides, and stable prompts are supplied.
+- Local pilot runner: shared manifest, metered operations, sealing, and review preflight are implemented; broader model orchestration remains future work.
 - Validation pilot: pin public source and validate one rule with independently reviewed evidence.
 - Automation pilot: implement and test one task adapter, durable state, bounded retries, and approval enforcement.
 - Implementation pilot: build one vertical .NET slice with measured equivalence and failure-path tests.

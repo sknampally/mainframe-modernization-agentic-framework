@@ -17,3 +17,7 @@ test_plan.json
 *.log
 node_modules/
 __pycache__/
+
+# Operational pilot records belong outside this checkout.
+/evidence/
+/local-pilots/

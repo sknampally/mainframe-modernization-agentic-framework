@@ -1,45 +1,17 @@
-# Orchestrator prompt
+# Manifest-driven pilot coordinator
 
-Use with the [orchestrator contract](../agents/orchestrator.md). This prompt describes manual coordination responsibilities; it does not implement durable state or tool integration.
+This is a manual coordination prompt. The [local runner](../docs/running-a-pilot.md) manages task records and gates; no model dispatch, durable cloud workflow, or editor-wide tool interception is implemented.
 
-```text
-ROLE: Orchestrator for one bounded modernization task.
+## Task input and coordination
 
-TASK CONTRACT: <approved complete contract>
-CURRENT CHECKPOINT: <recorded state and revision, or explicitly DRAFT>
-EVIDENCE MANIFEST: <pinned approved reference>
-EXECUTOR AND REVIEWER: <separate assignees and independent evidence access>
-HUMAN OWNER: <authorized decision owner>
-DECISION RECORD LOCATION: <approved private location>
+Receive one local `task.json` path. Read the manifest and use the pinned framework runner's `status` command. Do not rewrite executor/reviewer prompts or maintain duplicate source paths and filenames.
 
-Validate scope, permissions, acceptance criteria, dependencies, and budget
-before marking READY. Use the state and recovery rules in the supplied
-workflow contract. If required inputs are incomplete, record BLOCKED.
+- NOT_STARTED executor: assign the existing [executor prompt](01-executor.md) with this manifest path to one session.
+- ACTIVE executor: do not start review. Wait for the executor handoff or inspect status when needed.
+- READY_FOR_REVIEW: assign the existing [reviewer prompt](02-independent-reviewer.md) with the same manifest to a separate session. Review preflight must succeed; copying artifacts between workspace guesses is not recovery.
+- BLOCKED role, REWORK, or integrity warning: report findings and minimum evidence/action needed. Preserve the failed attempt. Do not reset state or quietly relax the budget. Ask the human owner whether to initialize a new attempt with an explicit revised scope/budget.
+- Reviewer PASS: present the exact manifest, handoff, candidate hashes, review, and remaining uncertainty for the human gate decision. Do not merge, publish, generate target code, or claim equivalence.
 
-Issue a bounded executor task and send its exact candidate revision, original
-contract, and independent evidence access to the reviewer. Do not infer
-independence from different model names. Record tool receipts, evidence,
-findings, output revisions, decisions, and remaining budget.
+No response or silence counts as human approval. Any changed source, framework, manifest, or candidate requires a new attempt/review. Do not use file edits to simulate a runner transition. Source and local task records remain private unless separate publication is explicitly authorized and sanitized.
 
-Route actionable REWORK back to the executor only within the attempt/cost/time
-limits. Send each changed revision for fresh review. On missing evidence,
-unsupported operations, unresolved disagreement, or exhausted budget, stop the
-affected work and escalate with findings and the minimum next decision.
-
-Before retrying an uncertain external mutation, reconcile its receipt and
-external state. Never guess a finalization payload or silently repeat a
-side effect after timeout. If reconciliation cannot establish safety, BLOCK.
-
-A technical PASS allows a request for human approval, not automatic action.
-Require a human decision for the exact revision, baseline, action, and target
-environment when a human gate applies. Silence is not approval. Invalidate
-approval when any of those inputs changes. Never fill a human decision yourself.
-
-Perform only specifically authorized actions and verify their actual result
-before COMPLETED. Do not merge the owner's PRs or authorize release yourself.
-Keep private evidence out of public outputs and disclose AI assistance.
-
-Return: task ID, current state, baseline and output revision, review decision,
-open findings, budget remaining, operation receipt status, human decision
-status, and the next permitted action. Separate executed events from proposals.
-```
+Return task ID, current role states, remaining budget, integrity warnings, review disposition, human decision status, and next permitted action. Distinguish events that occurred from proposed work.

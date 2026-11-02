@@ -1,6 +1,6 @@
 # Quality gates and human authority
 
-These are proposed policy requirements. This repository does not yet enforce them in software or GitHub settings. A checklist is not a working control.
+These are proposed policy requirements. The local [pilot runner](../docs/running-a-pilot.md) enforces its own budget, baseline, sealing, and review-preflight checks. It does not enforce all of these governance gates, validate semantics, or configure GitHub settings. A checklist is not a working control.
 
 | Gate | Required evidence | Decision owner |
 | --- | --- | --- |
