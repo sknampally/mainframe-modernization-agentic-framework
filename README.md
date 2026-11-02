@@ -20,27 +20,41 @@ Generated documentation is useful input, but it does not prove business behavior
 
 A service reporting a completed assessment step does not establish correct requirements. A generated test plan is not an executed test suite. See [limitations](docs/limitations.md).
 
-## Reference architecture — proposed
+## Multi-agent architecture — proposed
 
 ```mermaid
 flowchart TD
-    S[Approved pinned mainframe source] --> A[Assessment tools including AWS Transform]
-    A --> E[Private evidence store]
-    S --> E
-    E --> O[Orchestrator: scope and state]
-    O --> X[Executor: candidate output]
-    X --> R[Independent reviewer: source and test checks]
-    E --> R
-    R --> G{Quality gate}
-    G -->|Rework| O
-    G -->|Missing evidence or disagreement| H[Human decision]
-    G -->|Pass| H
-    H -->|Approve scoped next stage| T[Target design and .NET implementation]
-    T --> V[Equivalence and operational verification]
-    V --> D[Human release decision]
+    S["Legacy mainframe source<br/>COBOL · CICS/BMS · VSAM · JCL · Schedulers"]
+    A["AWS Transform — knowledge extraction<br/>Dependencies · Rule candidates · Data lineage · Documentation"]
+    O["Orchestrator — workflow and policy engine<br/>Prompts · Skills · Task contracts · Checkpoints · State"]
+    X["Executor agent<br/>Analyze · Design · Implement · Test"]
+    R["Independent reviewer agent<br/>Verify · Challenge · Recommend pass or rework"]
+    G{"Quality gate<br/>Candidate, tests, and independent review"}
+    H["Human approval<br/>Exact revision · Scoped action · Accepted risks"]
+    T["C#/.NET on AWS — target direction<br/>Design → Implementation → Equivalence testing"]
+    D["Human release decision"]
+    S --> A --> O
+    O --> X
+    O --> R
+    X -->|Candidate and tests| G
+    R -->|Review recommendation| G
+    G -->|Rework within budget| O
+    G -->|Technical pass or escalation| H
+    H -->|Approve next scoped stage| T
+    T --> D
+    classDef source fill:#f5f5f5,stroke:#d1d5db,color:#111827
+    classDef assessment fill:#eff6ff,stroke:#bfdbfe,color:#111827
+    classDef executor fill:#f0fdf4,stroke:#bbf7d0,color:#111827
+    classDef reviewer fill:#fff7ed,stroke:#fed7aa,color:#111827
+    class S source
+    class A assessment
+    class X executor
+    class R reviewer
 ```
 
-Arrows describe intended responsibilities, not implemented integrations. The target stack is a design decision: C#/.NET and AWS are the intended direction; UI, storage, hosting, and migration strategy require evidence and architecture decisions.
+Arrows describe intended responsibilities, not implemented integrations. The executor hands its candidate to the reviewer; the reviewer checks it against independently accessed pinned source and private evidence. Both the candidate and the review are required at the quality gate. A reviewer recommends technical acceptance; a human authorizes the next action. Missing evidence blocks advancement until resolved. The [detailed workflow](architecture/multi-agent-workflow.md) shows the execution/review sequence, rework, escalation, and approval invalidation.
+
+C#/.NET and AWS are the intended direction. Blazor, storage, hosting, and migration strategy remain architecture decisions. Skills and prompts are planned components; no executable skill library or orchestration engine is bundled.
 
 ## Start here
 
@@ -51,6 +65,59 @@ Arrows describe intended responsibilities, not implemented integrations. The tar
 5. Record evidence, unresolved gaps, review results, and human decisions. Missing evidence blocks the relevant gate.
 
 ## Repository map
+
+The current foundation contains the following files. The directory tree is documentation structure, not evidence that the proposed automation is implemented.
+
+```text
+mainframe-modernization-agentic-framework/
+├── README.md
+├── LICENSE
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── THIRD_PARTY.md
+├── .gitignore
+├── .github/
+│   └── pull_request_template.md
+├── architecture/
+│   └── multi-agent-workflow.md
+├── methodology/
+│   └── modernization.md
+├── agents/
+│   ├── orchestrator.md
+│   ├── executor.md
+│   └── independent-reviewer.md
+├── contracts/
+│   ├── README.md
+│   ├── task-contract.yaml
+│   ├── review-record.yaml
+│   └── approval-record.yaml
+├── quality-gates/
+│   └── README.md
+├── examples/
+│   └── carddemo/
+│       ├── README.md
+│       └── synthetic-example.md
+└── docs/
+    └── limitations.md
+```
+
+Planned additions, to be introduced in separate reviewed changes:
+
+```text
+methodology/
+├── 01-discovery.md
+├── 02-requirements-validation.md
+├── 03-target-architecture.md
+├── 04-ui-and-data-design.md
+├── 05-implementation.md
+└── 06-equivalence-testing.md
+skills/
+prompts/
+docs/
+└── lessons-learned.md
+```
+
+The six methodology stages are currently covered in `methodology/modernization.md`. The planned files above do not exist yet. Skills, prompts, and lessons learned will be added with bounded instructions and reviewed evidence rather than empty placeholders.
 
 | Path | Purpose |
 | --- | --- |
