@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1330" viewBox="0 0 1120 1330" role="img" aria-labelledby="title desc">
+<title id="title">Four-phase modernization preparation workflow</title>
+<desc id="desc">Pinned source is assessed with AWS Transform or imported findings. A human approves the assessment. Separate Claude Sonnet and Opus sessions prepare and independently review specifications. SME decisions and approval precede HTML business review using Codex or Claude. Business approval enables a versioned implementation package. Application buildout is future work. The CLI manages evidence, resumability and bounded corrections throughout.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#526782"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#14283f}.title{font-size:30px;font-weight:700}.sub{font-size:16px;fill:#526782}.phase{font-size:20px;font-weight:700}.box-title{font-size:18px;font-weight:700}.body{font-size:16px}.small{font-size:14px;fill:#526782}.gate{font-size:16px;font-weight:700;fill:#775008}.line{fill:none;stroke:#526782;stroke-width:2;marker-end:url(#arrow)}.panel{fill:#fff;stroke:#d7e1ec;stroke-width:1.5}.node{fill:#f6f9fd;stroke:#cbd9e9;stroke-width:1.2}</style>
+<rect width="1120" height="1330" rx="20" fill="#f1f5fa"/>
+<text x="40" y="48" class="title">From mainframe source to an approved build package</text>
+<text x="40" y="76" class="sub">POC scope: assess → validate → review → package</text>
+<rect x="40" y="98" width="1040" height="62" rx="12" fill="#142f50"/>
+<text x="60" y="123" style="font:700 17px Arial;fill:white">OUR CLI · ORCHESTRATOR</text>
+<text x="60" y="146" style="font:15px Arial;fill:#dce8f7">Pinned evidence · saved state &amp; resume · agent handoffs · bounded corrections · versioned approvals</text>
+<rect x="40" y="188" width="1040" height="224" rx="12" class="panel"/>
+<circle cx="72" cy="220" r="16" fill="#183e69"/>
+<text x="72" y="225" text-anchor="middle" style="font:700 14px Arial;fill:white">01</text>
+<text x="100" y="226" class="phase">Collect &amp; assess</text>
+<text x="100" y="252" class="small">AWS Transform via MCP; Kiro is optional and not required for assessment</text>
+<path d="M560 416 L560 438" class="line"/>
+<rect x="40" y="444" width="1040" height="224" rx="12" class="panel"/>
+<circle cx="72" cy="476" r="16" fill="#183e69"/>
+<text x="72" y="481" text-anchor="middle" style="font:700 14px Arial;fill:white">02</text>
+<text x="100" y="482" class="phase">Prepare &amp; challenge</text>
+<text x="100" y="508" class="small">Two separate Claude Code sessions · distinct pinned models · independent source reads</text>
+<path d="M560 672 L560 694" class="line"/>
+<rect x="40" y="700" width="1040" height="224" rx="12" class="panel"/>
+<circle cx="72" cy="732" r="16" fill="#183e69"/>
+<text x="72" y="737" text-anchor="middle" style="font:700 14px Arial;fill:white">03</text>
+<text x="100" y="738" class="phase">Review with the business</text>
+<text x="100" y="764" class="small">Stakeholder review of the proposed experience, rules and unresolved decisions</text>
+<path d="M560 928 L560 950" class="line"/>
+<rect x="40" y="956" width="1040" height="224" rx="12" class="panel"/>
+<circle cx="72" cy="988" r="16" fill="#183e69"/>
+<text x="72" y="993" text-anchor="middle" style="font:700 14px Arial;fill:white">04</text>
+<text x="100" y="994" class="phase">Package for engineering</text>
+<text x="100" y="1020" class="small">Versioned, private handoff for a future implementation team</text>
+<rect x="62" y="276" width="310" height="94" rx="12" class="node"/>
+<text x="80" y="305" class="box-title">Pinned source</text>
+<text x="80" y="331" class="body">GitHub or local repository</text>
+<text x="80" y="354" class="body">Recorded commit and scope</text>
+<rect x="420" y="276" width="310" height="94" rx="12" class="node"/>
+<text x="438" y="305" class="box-title">Assessment findings</text>
+<text x="438" y="331" class="body">New AWS Transform job</text>
+<text x="438" y="354" class="body">Or import local / S3 findings</text>
+<path d="M377 323 L414 323" class="line"/>
+<path d="M735 323 L810 323" class="line"/>
+<rect x="818" y="276" width="240" height="94" rx="12" fill="#fff4d8" stroke="#e1cb91"/>
+<text x="834" y="302" class="gate">HUMAN APPROVAL</text>
+<text x="834" y="326" class="body">Accept assessment</text>
+<text x="834" y="349" class="small">Check ingestion and provenance</text>
+<text x="62" y="394" class="small">Repeatability: preserve run A + run B, compare findings, then select the baseline.</text>
+<rect x="62" y="532" width="310" height="94" rx="12" class="node"/>
+<text x="80" y="561" class="box-title">Executor · Claude Sonnet</text>
+<text x="80" y="587" class="body">Source-grounded specifications</text>
+<text x="80" y="610" class="body">Rules, contracts and build prompts</text>
+<rect x="420" y="532" width="310" height="94" rx="12" class="node"/>
+<text x="438" y="561" class="box-title">Reviewer · Claude Opus</text>
+<text x="438" y="587" class="body">Independent evidence checks</text>
+<text x="438" y="610" class="body">PASS · REWORK · BLOCKED</text>
+<path d="M377 579 L414 579" class="line"/>
+<path d="M735 579 L810 579" class="line"/>
+<rect x="818" y="532" width="240" height="94" rx="12" fill="#fff4d8" stroke="#e1cb91"/>
+<text x="834" y="558" class="gate">HUMAN APPROVAL</text>
+<text x="834" y="582" class="body">Validate specifications</text>
+<text x="834" y="605" class="small">SME decisions + architect review</text>
+<path d="M575 629 L575 652 L217 652 L217 630" class="line"/>
+<text x="600" y="654" class="small">Bounded rework; evidence gaps block progress.</text>
+<rect x="62" y="788" width="310" height="94" rx="12" class="node"/>
+<text x="80" y="817" class="box-title">Codex or Claude</text>
+<text x="80" y="843" class="body">Wireframe and review content</text>
+<text x="80" y="866" class="body">Approved scope and decisions</text>
+<rect x="420" y="788" width="310" height="94" rx="12" class="node"/>
+<text x="438" y="817" class="box-title">HTML review site</text>
+<text x="438" y="843" class="body">Screens, flows and business rules</text>
+<text x="438" y="866" class="body">Illustrative states; no backend</text>
+<path d="M377 835 L414 835" class="line"/>
+<path d="M735 835 L810 835" class="line"/>
+<rect x="818" y="788" width="240" height="94" rx="12" fill="#fff4d8" stroke="#e1cb91"/>
+<text x="834" y="814" class="gate">HUMAN APPROVAL</text>
+<text x="834" y="838" class="body">Approve exact version</text>
+<text x="834" y="861" class="small">Business owner reviews HTML</text>
+<text x="62" y="906" class="small">Feedback returns to specification review and invalidates affected downstream approvals.</text>
+<rect x="62" y="1044" width="310" height="94" rx="12" class="node"/>
+<text x="80" y="1073" class="box-title">Implementation package</text>
+<text x="80" y="1099" class="body">Specifications + reusable prompts</text>
+<text x="80" y="1122" class="body">Traceability + decisions + tests</text>
+<rect x="420" y="1044" width="310" height="94" rx="12" class="node"/>
+<text x="438" y="1073" class="box-title">Engineering handoff</text>
+<text x="438" y="1099" class="body">Ordered implementation backlog</text>
+<text x="438" y="1122" class="body">Proposed monorepo + checksums</text>
+<path d="M377 1091 L414 1091" class="line"/>
+<rect x="818" y="1044" width="240" height="94" rx="12" fill="#e8f5ed" stroke="#e1cb91"/>
+<text x="834" y="1073" class="box-title">POC COMPLETE</text>
+<text x="834" y="1100" class="body">Ready to guide buildout</text>
+<text x="834" y="1122" class="small">Tests remain NOT RUN</text>
+<path d="M735 1091 L810 1091" class="line"/>
+<text x="62" y="1162" class="small">Deferred SME questions retain explicit blocked work; packaging does not authorize that work.</text>
+<rect x="40" y="1210" width="1040" height="80" rx="12" fill="none" stroke="#8ca0b8" stroke-dasharray="7 5"/>
+<text x="60" y="1239" class="box-title">FUTURE ENGINEERING · OUTSIDE THIS POC</text>
+<text x="60" y="1266" class="body">Create the monorepo · implement · execute equivalence tests · migrate · deploy</text>
+<text x="40" y="1314" class="small">Evidence status: workflow tested with fixtures; Claude model connectivity verified; full CardDemo / AWS acceptance pending.</text>
+</svg>
