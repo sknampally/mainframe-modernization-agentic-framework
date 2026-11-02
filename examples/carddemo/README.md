@@ -23,6 +23,8 @@ The useful lessons are methodological: generated job-level coverage does not pro
 
 Start with [synthetic rule and test example](synthetic-example.md). Replace it only through a separate PR with source-backed evidence. The example is invented; it must never be cited as a CardDemo business rule.
 
+Use the [one-rule validation prompt](../../prompts/04-rule-validation-pilot.md) for the first bounded task and the [review prompt](../../prompts/02-independent-reviewer.md) for independent source review. No pilot execution is recorded here yet.
+
 ## Proposed first reproducible pilot
 
 1. Pin the upstream commit and select one public-source behavior with complete dependencies.
