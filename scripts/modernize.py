@@ -129,13 +129,16 @@ def mutation(work, project, key, fn):
 
 
 def setup(work, project, args, client=None):
+    authentication = None
+    if args.connect:
+        from modernize_setup import connect_arguments
+        authentication = connect_arguments(args.connect)
     identity = aws(project, 'sts', 'get-caller-identity', '--output', 'json')
     write(work / 'aws-identity.json', identity)
     config = project['settings']['transform']
     client = client or kw.Transform(config, work)
-    if args.connect:
-        # Exact supported configure payload is operator supplied privately; runtime schema is checked.
-        client.calls([('configure', read(Path(args.connect)))])
+    if authentication is not None:
+        client.calls([('configure', authentication)])
     client.calls([('get_status', {})])
     if args.attach_workspace:
         require(not config.get('workspace_id') or config['workspace_id'] == args.attach_workspace, 'Workspace already selected')

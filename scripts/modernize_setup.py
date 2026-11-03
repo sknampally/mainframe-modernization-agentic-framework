@@ -1,5 +1,7 @@
 """Interactive onboarding and private active-workspace selection."""
 import json
+import configparser
+import re
 import os
 import shutil
 import subprocess
@@ -36,6 +38,71 @@ def yes(label, default=False):
     answer = input(label + (' [Y/n]: ' if default else ' [y/N]: ')).strip().lower()
     require(answer in {'', 'y', 'yes', 'n', 'no'}, 'Answer yes or no')
     return answer in {'y', 'yes'} or (not answer and default)
+
+
+def optional(label, default=''):
+    value = input(label + (f' [{default}]' if default else '') + ': ').strip() or default
+    require('\n' not in value and '\r' not in value and not value.startswith(('{','[')),
+            'Enter one value, not JSON or multiple lines. No setup operation was requested.')
+    return value
+
+
+def connect_arguments(path):
+    candidate = Path(path).expanduser()
+    require(candidate.is_file(), 'Enter a path to an existing private configure-arguments file, not pasted JSON.')
+    value = json.loads(candidate.read_text())
+    require(isinstance(value, dict) and 'mcpServers' not in value and value.get('authMode') in {'sso','cookie','reset'},
+            'This is not Transform authentication arguments. MCP client mcpServers configuration is not accepted here.')
+    return value
+
+
+def sso_defaults(project):
+    config = configparser.RawConfigParser()
+    config.read(Path(os.environ.get('AWS_CONFIG_FILE', str(Path.home()/'.aws/config'))))
+    profile = project['aws'].get('profile') or 'default'
+    section = 'default' if profile == 'default' else 'profile ' + profile
+    session = config.get(section,'sso_session',fallback='')
+    section = 'sso-session ' + session if session else section
+    return config.get(section,'sso_start_url',fallback=''), config.get(section,'sso_region',fallback='')
+
+
+def connect_transform(work, project, client=None):
+    import kiro_workflow as flow
+    client = client or flow.Transform(project['settings']['transform'], work)
+    print('Checking the AWS Transform application connection...')
+    status = client.calls([('get_status', {})])[0]
+    connection = status.get('connection', {})
+    if connection.get('configured') is True and not connection.get('error'):
+        print('AWS Transform connection verified.')
+        return client
+    require(not connection.get('error'), 'Transform session verification failed. Retry later; no resource setup has started.')
+    print('AWS credentials work, but the Transform application is not connected yet.')
+    method = ask('Connection method: sso (browser) or file (advanced)', 'sso')
+    require(method in {'sso','file'}, 'Choose sso or file')
+    if method == 'file':
+        path = optional('Path to private authentication-arguments file (do not paste JSON)')
+        arguments = connect_arguments(path)
+    else:
+        from urllib.parse import urlparse
+        start, region = sso_defaults(project)
+        start = ask('IAM Identity Center start URL', start or None)
+        parsed = urlparse(start)
+        require(parsed.scheme == 'https' and parsed.netloc and not parsed.username and not parsed.password,
+                'Enter your HTTPS Identity Center start URL, not JSON or credentials')
+        region = ask('Identity Center region (may differ from workload region)', region or None)
+        require(re.fullmatch(r'[a-z]{2}(?:-[a-z]+)+-\d+', region), 'Enter an AWS region name')
+        arguments = {'authMode':'sso','startUrl':start,'idcRegion':region}
+        profile = optional('Transform application profile name (Enter selects automatically when unambiguous)')
+        if profile: arguments['profileName'] = profile
+    if arguments.get('authMode') == 'sso':
+        require(yes('Open the AWS Transform SSO browser sign-in now?', default=True), 'Transform connection deferred; rerun /init')
+    client.calls([('configure', arguments)])
+    status = client.calls([('get_status', {})])[0]
+    connection = status.get('connection', {})
+    require(connection.get('configured') is True and not connection.get('error'),
+            'Transform connection is not verified. Resolve application/profile access and rerun /init.')
+    print('AWS Transform connection verified after sign-in.')
+    return client
 
 
 def command_ok(command):
@@ -125,7 +192,7 @@ def guided_init(args):
     else:
         args.source = args.source or ask('Local Git checkout or GitHub repository URL', 'https://github.com/aws-samples/aws-mainframe-modernization-carddemo.git')
         if args.source.startswith('https://'):
-            value = input('Git commit/ref to pin (Enter uses current default branch): ').strip()
+            value = optional('Git commit/ref to pin (Enter uses current default branch)')
             args.ref = args.ref or value or None
         args.scope = args.scope or ask('Business journey / assessment scope', 'CardDemo sign-on journey; exclude other application journeys')
         print('Choose an AWS profile. Setup can guide SSO configuration/login when access needs refreshing.')
@@ -144,6 +211,7 @@ def guided_init(args):
     select_workspace(work)
     # From here all writes and remote setup share the regular project lock.
     with app.locked(work) as project:
+        refresh_unstarted_baseline(work, project)
         checks(project)
         for key, variable in (('profile', 'AWS_PROFILE'), ('region', 'AWS_DEFAULT_REGION')):
             if project['aws'].get(key): os.environ[variable] = project['aws'][key]
@@ -154,13 +222,13 @@ def guided_init(args):
         print('Choose existing resources or authorize creation. No assessment job starts during init.')
         if not yes('Configure/check Transform resources now?'):
             return {'workspace': str(work), 'status': 'SETUP_INCOMPLETE', 'next_step': 'modernize init'}
-        connect = input('Private MCP configure-arguments JSON file (Enter reuses existing connection): ').strip() or None
+        client = connect_transform(work, project)
         config = project['settings']['transform']
-        wid = config.get('workspace_id') or input('Existing Transform workspace ID (Enter creates one): ').strip()
-        cid = project['setup'].get('connector_id') or input('Existing S3 connector ID (Enter creates one): ').strip()
+        wid = config.get('workspace_id') or optional('Existing Transform workspace ID (Enter creates one)')
+        cid = project['setup'].get('connector_id') or optional('Existing S3 connector ID (Enter creates one)')
         create_bucket = yes('Create the chosen bucket? Choose no to use an existing bucket.')
         setup = app.parser().parse_args(['setup'])
-        setup.connect = connect
+        setup.connect = None
         setup.create_bucket = create_bucket
         setup.attach_workspace = wid or None
         setup.attach_connector = cid or None
@@ -168,15 +236,35 @@ def guided_init(args):
         setup.create_connector = None if cid else ask('New connector name', 'mainframe-source')
         require(yes('Proceed with these AWS setup operations?'), 'AWS setup cancelled; rerun modernize init to continue')
         try:
-            result = app.setup(work, project, setup)
+            result = app.setup(work, project, setup, client)
             if result.get('verification_link'): print('Connector approval: ' + result['verification_link'])
             if yes('Has an authorized administrator activated this connector?'):
                 setup.create_bucket = False
                 setup.connector_approved = ask('Name of approving administrator')
-                result = app.setup(work, project, setup)
+                result = app.setup(work, project, setup, client)
             return {'workspace': str(work), 'status': result['status'], 'next_step': next_step(project)}
         finally:
             app.persist(work, project)
+
+
+def refresh_unstarted_baseline(work, project):
+    import modernize as app
+    previous = project.get('framework_commit')
+    if not previous: return
+    current = app.git(app.FRAMEWORK, 'rev-parse', 'HEAD')
+    if previous == current:
+        return
+    require(not project.get('assessments') and not project.get('approvals') and not project.get('pipeline'),
+            'An assessment/evidence baseline exists. Use its pinned framework checkout or initialize a new private workspace.')
+    require(not app.git(app.FRAMEWORK, 'status', '--porcelain'), 'Framework checkout must be clean')
+    require(app.git(Path(project['source']['root']), 'rev-parse', 'HEAD') == project['source']['commit'], 'Pinned source changed')
+    require(not app.git(Path(project['source']['root']), 'status', '--porcelain'), 'Source checkout must be clean')
+    print('The framework was updated after initial setup; no assessments or approvals exist yet.')
+    require(yes('Use the current framework revision for this not-yet-started experiment?'),
+            'Framework revision unchanged. Use the earlier checkout or initialize a new workspace.')
+    project['framework_commit'] = current
+    project.setdefault('events', []).append({'event':'unstarted_framework_baseline_refreshed','previous':previous,'current':current})
+    app.persist(work, project)
 
 
 def next_step(project):

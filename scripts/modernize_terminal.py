@@ -43,10 +43,22 @@ class Terminal:
         self.console.print(Text(clean(value), style=style))
 
     def ask(self, label, default=None):
-        return Prompt.ask(Text(clean(label)), default=default, console=self.console).strip()
+        # prompt_toolkit brackets a multiline paste as one event rather than feeding
+        # its lines into subsequent setup answers.
+        value = PromptSession(history=InMemoryHistory()).prompt(clean(label)+': ',default=default or '').strip()
+        from pilot import require
+        require('\n' not in value and '\r' not in value and not value.startswith(('{','[')),
+                'Enter a single value, not pasted JSON or multiple lines. Setup has stopped safely.')
+        return value
+
+    def optional(self, label, default=''):
+        return self.ask(label, default)
 
     def yes(self, label, default=False):
-        return Confirm.ask(Text(clean(label)), default=default, console=self.console)
+        value = self.ask(label+' [y/n]', 'y' if default else 'n').lower()
+        from pilot import require
+        require(value in {'y','yes','n','no'}, 'Answer y or n; pasted content is not an answer')
+        return value in {'y','yes'}
 
     def project(self):
         if self.demo:
@@ -153,12 +165,12 @@ class Terminal:
         import modernize as app
         import modernize_setup as setup
         # UI input adapters are local to this synchronous console action.
-        original_ask, original_yes = setup.ask, setup.yes
+        original_ask, original_yes, original_optional = setup.ask, setup.yes, setup.optional
         try:
-            setup.ask, setup.yes = self.ask, self.yes
+            setup.ask, setup.yes, setup.optional = self.ask, self.yes, self.optional
             return app.main(args,reporter=self.report)
         finally:
-            setup.ask, setup.yes = original_ask, original_yes
+            setup.ask, setup.yes, setup.optional = original_ask, original_yes, original_optional
 
     def artifacts(self):
         from modernize_setup import workspace

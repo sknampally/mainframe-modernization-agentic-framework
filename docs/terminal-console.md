@@ -25,7 +25,10 @@ it adapts to terminal width and does not require a web server.
 Choose a numbered menu item, or enter a slash command. Tab completes command names;
 Up/Down browse the session's in-memory command history. Ctrl+C cancels an action and
 returns to the console; Ctrl+D or `/exit` leaves it. Commands do not execute arbitrary
-shell text. Existing controller budgets, source checks and approval gates still apply.
+shell text. Setup input uses bracketed-paste handling: a multi-line paste is received as one
+value and rejected instead of feeding later questions. Do not paste MCP client JSON
+into setup fields; the normal Transform connection path is guided browser SSO.
+Existing controller budgets, source checks and approval gates still apply.
 
 | Command | Action |
 | --- | --- |

@@ -148,6 +148,54 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[0].args[0][-2:],['configure','sso'])
         self.assertEqual(run.call_args_list[1].args[0][-2:],['sso','login'])
 
+    def test_connected_transform_is_reused_without_reconfiguration(self):
+        client=argparse.Namespace(calls=lambda requests: [{'connection':{'configured':True}}])
+        with patch.object(guide,'ask',side_effect=AssertionError('No questions needed')):
+            self.assertIs(guide.connect_transform(self.work,self.project,client),client)
+
+    def test_transform_sso_configures_and_checks_connection_before_resources(self):
+        from unittest.mock import Mock
+        client=Mock()
+        client.calls.side_effect=[[{'connection':{'configured':False}}],[{}],[{'connection':{'configured':True}}]]
+        with patch.object(guide,'ask',side_effect=['sso','https://example.awsapps.com/start','us-east-1']),patch.object(guide,'sso_defaults',return_value=('','')),patch.object(guide,'optional',return_value=''),patch.object(guide,'yes',return_value=True):
+            guide.connect_transform(self.work,self.project,client)
+        arguments=client.calls.call_args_list[1].args[0][0][1]
+        self.assertEqual(arguments,{'authMode':'sso','startUrl':'https://example.awsapps.com/start','idcRegion':'us-east-1'})
+        self.assertEqual(client.calls.call_args_list[2].args[0],[('get_status',{})])
+
+    def test_unverified_transform_connection_does_not_advance(self):
+        from unittest.mock import Mock
+        client=Mock()
+        client.calls.side_effect=[[{'connection':{'configured':False}}],[{}],[{'connection':{'configured':False}}]]
+        with patch.object(guide,'ask',side_effect=['sso','https://example.awsapps.com/start','us-east-1']),patch.object(guide,'sso_defaults',return_value=('','')),patch.object(guide,'optional',return_value=''),patch.object(guide,'yes',return_value=True):
+            with self.assertRaisesRegex(Blocked,'not verified'):guide.connect_transform(self.work,self.project,client)
+
+    def test_mcp_client_configuration_is_not_authentication_arguments(self):
+        path=self.work/'client.json';path.write_text('{"mcpServers":{}}')
+        with self.assertRaisesRegex(Blocked,'MCP client'):guide.connect_arguments(str(path))
+        with self.assertRaisesRegex(Blocked,'path to an existing'):guide.connect_arguments('{')
+
+    def test_multiline_or_json_optional_input_is_rejected(self):
+        for value in ['{','["config"]','first\nsecond']:
+            with patch('builtins.input',return_value=value):
+                with self.assertRaisesRegex(Blocked,'not JSON'):guide.optional('Existing workspace ID')
+
+    def test_unstarted_project_can_refresh_framework_only_after_confirmation(self):
+        project=dict(self.project,framework_commit='old')
+        project['source']=dict(project['source'],commit='source-revision')
+        def git(root,*args):
+            if args==('status','--porcelain'):return ''
+            return 'new' if root==app.FRAMEWORK else 'source-revision'
+        with patch.object(app,'git',side_effect=git),patch.object(guide,'yes',return_value=True):
+            guide.refresh_unstarted_baseline(self.work,project)
+        self.assertEqual(project['framework_commit'],'new')
+
+    def test_existing_assessment_framework_revision_never_refreshed(self):
+        project=dict(self.project,framework_commit='old',assessments={'run-1':{}})
+        with patch.object(app,'git',return_value='new'),patch.object(guide,'yes',side_effect=AssertionError('No repinning')):
+            with self.assertRaisesRegex(Blocked,'baseline exists'):guide.refresh_unstarted_baseline(self.work,project)
+        self.assertEqual(project['framework_commit'],'old')
+
     def test_status_advertises_human_gate(self):
         self.project['stage']='AWAITING_ASSESSMENT_APPROVAL'
         self.assertIn('approve assessment',guide.next_step(self.project))

@@ -202,9 +202,11 @@ and rerun `modernize init`; saved evidence is retained.
 For new AWS assessments, the framework starts the official Transform MCP server
 through uvx. First use may download the server; approved network/proxy access is
 needed. Use an approved pinned server version in private settings for repeatability.
-AWS CLI login and the Transform application connection are distinct. The setup guide
-can reuse a configured connection or accept a **private** configure-arguments JSON
-file matching the server's actual schema. Follow the [official Transform MCP setup](https://github.com/awslabs/mcp/tree/main/src/aws-transform-mcp-server)
+AWS CLI login and the Transform application connection are distinct. Guided setup
+checks the connection and reuses it when valid; otherwise it guides a separate
+Transform browser SSO login and verifies that connection before resource setup.
+The advanced file option is for a **path** to private authentication arguments,
+not pasted JSON or a client `mcpServers` configuration. Follow the [official Transform MCP setup](https://github.com/awslabs/mcp/tree/main/src/aws-transform-mcp-server)
 for its supported authentication flow. It does not automatically create company SSO
 or bypass connector administrator activation.
 
