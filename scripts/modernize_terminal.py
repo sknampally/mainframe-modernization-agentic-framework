@@ -135,7 +135,7 @@ class Terminal:
         for key,value in result.items():
             if key=='status':continue
             # Hide values that can contain paths, resource identifiers or arbitrary error text.
-            if self.private and key not in {'next_step','model_calls','calls','round','changed_files','semantic_review'}:
+            if self.private and key not in {'next_step','model_calls','calls','round','changed_files','semantic_review','hint'}:
                 value='Details hidden by presentation privacy; /privacy reveals local results.'
             table.add_row(clean(key.replace('_',' ').title()),clean(value))
         self.console.print(Panel(table,title=Text(state.replace('_',' ')),border_style='red' if failed else 'green'))

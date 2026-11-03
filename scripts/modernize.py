@@ -759,7 +759,9 @@ def main(argv=None, reporter=None):
         emit(result)
         return 130
     except (Blocked, OSError, ValueError, KeyError, EOFError, subprocess.SubprocessError) as error:
-        emit({'status': 'BLOCKED', 'reason': str(error)})
+        result = {'status': 'BLOCKED', 'reason': str(error)}
+        if getattr(error, 'hint', None): result['hint'] = error.hint
+        emit(result)
         return 2
 
 
