@@ -1,4 +1,6 @@
-# Mainframe Modernization Agentic Framework
+# Reframe
+
+*From legacy source to a reviewed modernization plan.*
 
 A CLI for taking pinned mainframe source through assessment, independent validation,
 business review, and an approved implementation preparation package. C#/.NET on AWS
@@ -16,8 +18,15 @@ No custom prompt writing or manual agent handoffs are required for normal operat
 
 ```bash
 uv tool install --editable .
-modernize init
+modernize
 ```
+
+Open the [Reframe terminal console](docs/terminal-console.md) for numbered menus,
+a phase dashboard, slash-command completion, built-in guides and human-readable
+results. `modernize demo` opens an explicitly simulated preview with no service calls.
+The existing commands remain available for scripts.
+
+![Reframe terminal preview with synthetic data](docs/images/terminal-preview.svg)
 
 The setup guide saves source/environment choices privately, checks tools and logins,
 offers AWS resource setup, and suggests the next command. Later commands reuse the
@@ -157,6 +166,7 @@ mainframe-modernization-agentic-framework/
 ├── scripts/
 │   ├── pilot.py
 │   ├── kiro_workflow.py
+│   ├── modernize_terminal.py
 │   ├── modernize_setup.py
 │   ├── modernize.py
 │   ├── modernize_models.py
@@ -165,14 +175,17 @@ mainframe-modernization-agentic-framework/
 │   ├── test_pilot.py
 │   ├── test_kiro_workflow.py
 │   ├── test_mcp_transport.py
+│   ├── test_terminal.py
 │   ├── test_guided_cli.py
 │   ├── test_modernize.py
 │   └── fixtures/
 │       └── mcp_server.py
 └── docs/
     ├── images/
+    │   ├── terminal-preview.svg
     │   ├── poc-workflow.svg
     │   └── reference-architecture.svg
+    ├── terminal-console.md
     ├── engineer-setup.md
     ├── cli-guide.md
     ├── assessment-comparison.md

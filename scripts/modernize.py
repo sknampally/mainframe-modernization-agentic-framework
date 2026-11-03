@@ -597,7 +597,7 @@ def semantic_compare(work, project, args, runtime=model_call):
 
 
 def parser():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description=__doc__, epilog='Terminal application: modernize | modernize ui | modernize demo')
     p.add_argument('--workspace', help='Private workspace outside the framework and source checkout')
     commands = p.add_subparsers(dest='command', required=True)
     init = commands.add_parser('init', help='Pin GitHub/local source and save private settings')
@@ -653,14 +653,22 @@ def parser():
     return p
 
 
-def main(argv=None):
-    args = parser().parse_args(argv)
+def main(argv=None, reporter=None):
+    values = list(sys.argv[1:] if argv is None else argv)
+    if reporter is None and (not values or values in [['ui'], ['demo']]):
+        from modernize_terminal import launch
+        return launch(demo=values == ['demo'])
+    if reporter is None and values == ['init'] and sys.stdin.isatty() and sys.stdout.isatty():
+        from modernize_terminal import launch
+        return launch(initial='init')
+    emit = reporter or (lambda value: print(json.dumps(value, indent=2)))
+    args = parser().parse_args(values)
     from modernize_setup import guided_init, workspace, select_workspace, prepare_command, next_step
     project = None
     try:
         if args.command == 'init' and (args.guided or not args.source or not args.scope or not args.workspace):
             result = guided_init(args)
-            print(json.dumps(result, indent=2))
+            emit(result)
             return 0 if result['status'] not in {'SETUP_INCOMPLETE', 'WAITING_FOR_CONNECTOR_APPROVAL'} else 2
         work = Path(args.workspace).expanduser().resolve() if args.workspace else workspace()
         if args.command == 'init':
@@ -724,6 +732,10 @@ def main(argv=None):
                     if args.command in {'validate', 'review-site'}:
                         project.pop('pending_action', None)
                         persist(work, project)
+                except KeyboardInterrupt:
+                    # Retain budgets and phase markers while still holding the project lock.
+                    persist(work, project)
+                    raise
                 except kw.RuntimeUnavailable:
                     project['stage'] = 'WAITING_FOR_RUNTIME'
                     persist(work, project)
@@ -734,10 +746,17 @@ def main(argv=None):
                     raise
         if project is not None and 'next_step' not in result:
             result['next_step'] = next_step(project)
-        print(json.dumps(result, indent=2))
+        emit(result)
         return 2 if result.get('status') in {'BLOCKED', 'REWORK_LIMIT', 'ASSESSMENT_FAILED', 'NEEDS_RECONCILIATION'} else 0
+    except KeyboardInterrupt:
+        result = {'status': 'CANCELLED', 'reason': 'Cancelled by user. Saved work is retained.',
+                  'next_step': 'modernize init' if args.command == 'init' else 'modernize status'}
+        if args.command in {'assess', 'resume'}:
+            result['reason'] += ' An existing AWS job may continue; check status before resuming.'
+        emit(result)
+        return 130
     except (Blocked, OSError, ValueError, KeyError, EOFError, subprocess.SubprocessError) as error:
-        print(json.dumps({'status': 'BLOCKED', 'reason': str(error)}))
+        emit({'status': 'BLOCKED', 'reason': str(error)})
         return 2
 
 
