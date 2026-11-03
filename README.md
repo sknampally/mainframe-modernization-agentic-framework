@@ -39,20 +39,9 @@ A service reporting a completed assessment step does not establish correct requi
 
 ## POC workflow
 
-```mermaid
-flowchart LR
-    S[GitHub or local source] --> A[AWS Transform or existing findings]
-    A --> G1[Human assessment approval]
-    G1 --> E[Executor prepares specifications]
-    E --> R[Claude Code independent review]
-    R -->|Bounded corrections| E
-    R --> G2[SME decisions and validation approval]
-    G2 --> UI[Claude or Codex wireframe content]
-    UI --> H[HTML stakeholder review]
-    H --> G3[Business approval of exact version]
-    G3 --> P[Implementation package]
-    P -. Future engineering .-> M[Monorepo and actual buildout]
-```
+![Four-phase POC: assessment, separate Claude Sonnet executor and Opus reviewer, HTML business review, and approved implementation package](docs/images/poc-workflow.svg)
+
+[Open the full-size workflow](docs/images/poc-workflow.svg) · [Execution guide](docs/cli-guide.md)
 
 Each phase stops at its approval boundary. Service completion and reviewer PASS do
 not approve business requirements. Private records preserve provenance, uncertainty,
@@ -63,6 +52,18 @@ The [CLI guide](docs/cli-guide.md) describes implemented behavior and limitation
 The [broader reference architecture](docs/images/reference-architecture.svg) and
 [detailed delivery workflow](architecture/multi-agent-workflow.md) include future
 implementation/equivalence stages beyond this preparation POC.
+
+## Next: prove the CardDemo journey
+
+1. Configure private AWS/Transform access and confirm the selected S3 bucket, workspace and connector. The CLI setup must pass before starting assessment jobs.
+2. Pin one CardDemo commit and the sign-on scope. Run two independent assessments with matching inputs and recorded human task choices; preserve both snapshots.
+3. Compare run A and run B, inspect material differences against source, and approve the baseline for validation. More findings do not automatically mean better findings.
+4. Run the Sonnet executor and Opus reviewer. Resolve or explicitly defer SME questions and approve the validated specifications.
+5. Generate the HTML review site, collect stakeholder feedback, approve the exact version and create the implementation package.
+
+**Acceptance requires a live journey, not just generated files:** verify interruption/resume, approval stops, evidence traceability, reviewer corrections and package completeness. Full CardDemo/AWS acceptance is still pending. No application buildout is part of this POC.
+
+Follow the [CLI guide](docs/cli-guide.md) and [two-run comparison protocol](docs/assessment-comparison.md); the framework supplies the role prompts and manages the handoffs.
 
 ## Start here
 
@@ -161,6 +162,7 @@ mainframe-modernization-agentic-framework/
 │       └── mcp_server.py
 └── docs/
     ├── images/
+    │   ├── poc-workflow.svg
     │   └── reference-architecture.svg
     ├── cli-guide.md
     ├── assessment-comparison.md
