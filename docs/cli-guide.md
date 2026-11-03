@@ -1,5 +1,8 @@
 # Modernization preparation CLI
 
+For first installation, updates and troubleshooting on Mac or Windows/WSL2, follow
+[the platform installation guide](platform-install.md). Every install command includes the required trailing dot.
+
 The `modernize` entry point prepares a reviewed implementation package. It does not
 build a target application, deploy infrastructure for that application, migrate data,
 or prove behavioral equivalence. AWS assessment resources are the only cloud
@@ -22,7 +25,7 @@ Claude Code, optional Codex/Kiro, authentication and PATH troubleshooting.
 Install once from a clean checkout with Python 3.10+ and uv available:
 
 ```bash
-uv tool install --editable .
+uv tool install --force --python 3.12 --editable .
 modernize init
 ```
 

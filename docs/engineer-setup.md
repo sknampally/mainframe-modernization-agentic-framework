@@ -1,5 +1,8 @@
 # Engineer workstation setup
 
+For first installation, updates and troubleshooting on Mac or Windows/WSL2, follow
+[the platform installation guide](platform-install.md). Every install command includes the required trailing dot.
+
 Prepare this workstation once, then use `modernize init` for project setup. The POC
 currently supports macOS and Linux; native Windows execution is not supported.
 Use your organization's approved software distribution and authentication methods.
@@ -188,7 +191,7 @@ Clone the framework, then install its CLI in an isolated uv tool environment:
 ```bash
 git clone https://github.com/sknampally/mainframe-modernization-agentic-framework.git
 cd mainframe-modernization-agentic-framework
-uv tool install --python 3.12 --editable .
+uv tool install --force --python 3.12 --editable .
 modernize --help
 modernize
 ```
