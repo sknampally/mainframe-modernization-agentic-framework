@@ -12,6 +12,9 @@ file-lock/process-group implementation. Run from a clean committed framework che
 
 ## Start here: guided CLI
 
+Prefer a menu interface? Launch `modernize` for the [Reframe terminal console](terminal-console.md).
+Use `modernize demo` for a clearly labeled, service-free presentation preview.
+
 First install the required tools and configure your AWS profile using the
 [engineer workstation guide](engineer-setup.md). It includes uv/Python, AWS CLI v2,
 Claude Code, optional Codex/Kiro, authentication and PATH troubleshooting.

@@ -181,10 +181,10 @@ git clone https://github.com/sknampally/mainframe-modernization-agentic-framewor
 cd mainframe-modernization-agentic-framework
 uv tool install --python 3.12 --editable .
 modernize --help
-modernize init
+modernize
 ```
 
-Keep this editable checkout available and clean. `init` asks for source location,
+Keep this editable checkout available and clean. The [terminal console](terminal-console.md) opens a menu; choose setup or type `/init`. `init` asks for source location,
 scope, private output workspace, AWS profile/region/bucket and runtime choices. It
 checks the relevant CLIs and logins, offers AWS resource setup and suggests the next
 command. If a prerequisite is missing, follow the reported installation/login hint
