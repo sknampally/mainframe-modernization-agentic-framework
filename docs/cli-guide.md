@@ -12,6 +12,10 @@ file-lock/process-group implementation. Run from a clean committed framework che
 
 ## Start here: guided CLI
 
+First install the required tools and configure your AWS profile using the
+[engineer workstation guide](engineer-setup.md). It includes uv/Python, AWS CLI v2,
+Claude Code, optional Codex/Kiro, authentication and PATH troubleshooting.
+
 Install once from a clean checkout with Python 3.10+ and uv available:
 
 ```bash
