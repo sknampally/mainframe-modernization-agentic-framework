@@ -1,0 +1,56 @@
+# Live assessment readiness
+
+Reframe must turn observed recovery steps into reusable CLI behavior. An operator's
+successful recovery is evidence of an integration issue, not evidence that the CLI
+has passed an unattended assessment. This checklist records that distinction.
+
+## Recovery coverage
+
+| Observed issue | Framework behavior | Verification boundary |
+| --- | --- | --- |
+| MCP dependency or CPU architecture mismatch | Fail during setup with a managed Python reinstall instruction; save private diagnostics | Local tests; workstation repair still requires installing a compatible interpreter |
+| Expired AWS credentials | Guided init offers AWS SSO login and rechecks access | Browser sign-in is a user action; unattended session renewal is not guaranteed |
+| Mainframe connector rejected generic S3 configuration | Setup uses the mainframe S3 connector type and bucket ARN configuration | Observed successful live connector creation; not a universal connector contract |
+| Connector confirmation supplied while AWS still reports PENDING | Setup queries AWS and requires ACTIVE in the selected account; an explicitly supplied role must match | Offline readiness regression tests; administrator activation remains required |
+| Job creation requires an orchestrator omitted by the advertised schema | Discover the unique service-returned mainframe orchestrator before uploading; ambiguity blocks creation | Live discovery observed; offline discovery/ambiguity tests |
+| Job exists but no assessment plan starts | Recognized onboarding prompts trigger a complete assessment-only capability selection using the pinned source, scope and connector | Offline message and recovery tests; fresh CLI-only live acceptance pending |
+| AWS asks to repeat capability selection | Send the full named capability set with existing job/source context; maximum two distinct onboarding responses | Bounded attempts, private intent/receipt and uncertain-send reconciliation tests |
+| Job reports EXECUTING while a human task is pending | Pause for the task; never infer generated-deliverable approval | Offline regression tests |
+| Tool reports failure inside a successful transport envelope | Save the raw tool response privately before returning an error | Local diagnostics; raw responses are never public evidence |
+
+Plan selection sends no source-derived instructions to the job agent: the message
+is constructed from the user's saved scope and pinned run configuration. Unknown
+chat prompts do not authorize additional actions. Existing plans are not recreated.
+An interrupted message with no successful receipt requires reconciliation; resume
+does not blindly resend it or create a new job.
+
+## Administrator boundary
+
+The CLI can create the selected private bucket, workspace and connector after
+authorization. An administrator must provide or activate the connector's IAM role.
+For scripted activation, use `modernize setup --role-arn <approved-role-arn>` and
+`--connector-approved <administrator-name>` for the selected private workspace.
+The CLI verifies AWS readiness rather than trusting the administrator's name alone.
+It does not manufacture a trust policy by copying another customer's role.
+
+Creating a dedicated IAM role automatically is **not implemented**. The observed
+manual role creation is not part of unattended CLI acceptance. Any future role
+provisioning must use documented trust requirements, a reviewable bucket-scoped
+policy and explicit authorization. Administrator access alone does not establish
+the service trust relationship.
+
+## Release acceptance still required
+
+- Complete kickoff source configuration and every assessment capability through
+  documented CLI paths. Any required console task must be identified and explained.
+- Preserve explicit human decisions for scope changes and generated deliverables;
+  distinguish those decisions from mechanical source configuration.
+- Complete a new CardDemo assessment from a clean pinned checkout using only the
+  installed CLI, with no operator-issued MCP calls or private state edits.
+- Repeat on a second mainframe repository using configuration changes only.
+- Exercise interruption/resume and compare two assessments of the same source
+  revision before claiming repeatability.
+
+Until these checks pass, describe live assessment automation as a POC under
+validation. Passing local tests does not establish live end-to-end acceptance,
+support for every mainframe dialect, or behavioral equivalence.
