@@ -208,6 +208,63 @@ def setup(work, project, args, client=None):
     return {'status': project['stage'], 'verification_link': project['setup'].get('verification_link')}
 
 
+def assessment_tasks(work, project, args, client=None):
+    """Inspect service checkpoints without changing the pinned run or approving it."""
+    label = args.label or project.get('active_assessment')
+    require(label in project['assessments'], 'Select an existing assessment label')
+    directory = Path(project['assessments'][label]['directory'])
+    run = read(directory / 'run.json')
+    require(run.get('job_id'), 'This assessment has no AWS job to inspect')
+    config = run['settings']['transform']
+    service = client or kw.Transform(config, directory)
+    identity = {'workspaceId': config['workspace_id'], 'jobId': run['job_id']}
+    snapshot = service.calls([('load_instructions', identity),
+                              ('get_job_status', {**identity, 'detailed': True})])[-1]
+    write(directory / 'assessment-status.json', snapshot)
+    records = []
+    for item in snapshot.get('tasks', {}).get('hitlTasks', []):
+        if item.get('status') not in {'AWAITING_HUMAN_INPUT','PENDING_HUMAN_INPUT','AWAITING_APPROVAL'}:
+            continue
+        task_id = item.get('taskId')
+        require(isinstance(task_id, str) and task_id, 'AWS task has no identity')
+        detail = service.calls([('load_instructions', identity),
+                                ('get_resource', {**identity, 'resource': 'task', 'taskId': task_id})])[-1]
+        # A hash keeps untrusted service identifiers out of local path names.
+        path = directory / ('task-' + digest(task_id) + '.json')
+        write(path, detail)
+        task = detail.get('task', {})
+        record = {'title': task.get('title'), 'component': task.get('uxComponentId'),
+                  'status': task.get('status'), 'blocking': task.get('blockingType'),
+                  'detail_path': str(path)}
+        if args.details:
+            record['details'] = detail
+        if getattr(args, 'continue_code_analysis', False) and task.get('uxComponentId') == 'MainframeAnalysisResults':
+            schema = task.get('_outputSchema', {})
+            require(task.get('taskId') == task_id and task.get('jobMetadata') == identity,
+                    'Task identity changed; no acknowledgment submitted')
+            require(schema.get('type') == 'object' and schema.get('required') == []
+                    and task.get('_responseTemplate') == {}
+                    and set(schema.get('properties', {})) == {'file', 'files', 'missingNodes'},
+                    'Code-analysis response contract changed; inspect before continuing')
+            require(detail.get('agentArtifactContent', {}).get('properties', {}).get('files'),
+                    'Code-analysis report is empty; wait for AWS')
+            intent = directory / ('continue-analysis-' + digest(task_id) + '-intent.json')
+            receipt = directory / ('continue-analysis-' + digest(task_id) + '-receipt.json')
+            if receipt.exists():
+                record['continuation'] = 'ALREADY_SUBMITTED'
+            else:
+                require(not intent.exists(), 'Previous acknowledgment outcome uncertain; reconcile before retrying')
+                write(intent, {'task_id': task_id, 'content': {}, 'decision': 'Keep existing file classifications; findings remain unreviewed'})
+                response = service.calls([('load_instructions', identity), ('complete_task', {
+                    **identity, 'taskId': task_id, 'content': '{}', 'action': 'APPROVE'})])[-1]
+                write(receipt, response)
+                record['continuation'] = 'SUBMITTED_UNCHANGED'
+        records.append(record)
+    return {'label': label, 'status': 'TASKS_INSPECTED', 'tasks': records,
+            'next_step': 'modernize resume; final assessment approval is still required before validation.' if getattr(args, 'continue_code_analysis', False)
+                         else 'Assessment task inspection is read-only; no task or phase approval was submitted.'}
+
+
 def verify_source(project):
     kw.source_ok(project)
 
@@ -645,6 +702,10 @@ def parser():
         a.add_argument('--detach', action='store_true')
         a.add_argument('--attach-job')
     commands.add_parser('status')
+    t = commands.add_parser('tasks', help='Inspect current AWS assessment checkpoints without approving them')
+    t.add_argument('--label')
+    t.add_argument('--details', action='store_true', help='Include private task artifact and response schema')
+    t.add_argument('--continue-code-analysis', action='store_true', help='Keep current file classifications and acknowledge the code-analysis checkpoint; does not approve assessment findings')
     a = commands.add_parser('approve')
     a.add_argument('phase', choices=['assessment', 'validation', 'specifications'])
     a.add_argument('--label')
@@ -738,6 +799,7 @@ def main(argv=None, reporter=None):
                         project.pop('pending_action', None)
                         persist(work, project)
                     elif args.command == 'setup': result = setup(work, project, args)
+                    elif args.command == 'tasks': result = assessment_tasks(work, project, args)
                     elif args.command in {'assess', 'resume'}: result = assessment(work, project, args)
                     elif args.command == 'approve': result = approve(work, project, args)
                     elif args.command == 'validate': result = pipeline(work, project, args)
