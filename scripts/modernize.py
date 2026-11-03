@@ -732,6 +732,10 @@ def main(argv=None, reporter=None):
                     if args.command in {'validate', 'review-site'}:
                         project.pop('pending_action', None)
                         persist(work, project)
+                except KeyboardInterrupt:
+                    # Retain budgets and phase markers while still holding the project lock.
+                    persist(work, project)
+                    raise
                 except kw.RuntimeUnavailable:
                     project['stage'] = 'WAITING_FOR_RUNTIME'
                     persist(work, project)
@@ -744,6 +748,13 @@ def main(argv=None, reporter=None):
             result['next_step'] = next_step(project)
         emit(result)
         return 2 if result.get('status') in {'BLOCKED', 'REWORK_LIMIT', 'ASSESSMENT_FAILED', 'NEEDS_RECONCILIATION'} else 0
+    except KeyboardInterrupt:
+        result = {'status': 'CANCELLED', 'reason': 'Cancelled by user. Saved work is retained.',
+                  'next_step': 'modernize init' if args.command == 'init' else 'modernize status'}
+        if args.command in {'assess', 'resume'}:
+            result['reason'] += ' An existing AWS job may continue; check status before resuming.'
+        emit(result)
+        return 130
     except (Blocked, OSError, ValueError, KeyError, EOFError, subprocess.SubprocessError) as error:
         emit({'status': 'BLOCKED', 'reason': str(error)})
         return 2

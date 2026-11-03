@@ -92,6 +92,29 @@ class GuidedTests(unittest.TestCase):
         pipeline.assert_called_once()
         self.assertNotIn('pending_action',app.read(self.work/'project.json'))
 
+    def test_ctrl_c_during_first_init_prompt_has_no_traceback(self):
+        output=[]
+        with patch.object(guide,'guided_init',side_effect=KeyboardInterrupt):
+            code=app.main(['init','--guided'],reporter=output.append)
+        self.assertEqual(code,130)
+        self.assertEqual(output[0]['status'],'CANCELLED')
+        self.assertEqual(output[0]['next_step'],'modernize init')
+        self.assertFalse((self.work/'project.json').exists())
+
+    def test_ctrl_c_retains_pending_phase_and_consumed_budget(self):
+        app.write(self.work/'project.json',self.project)
+        def interrupted(work,project,args):
+            project['pipeline']={'calls':1}
+            raise KeyboardInterrupt
+        output=[]
+        with patch.object(app,'pipeline',side_effect=interrupted):
+            code=app.main(['--workspace',str(self.work),'validate'],reporter=output.append)
+        saved=app.read(self.work/'project.json')
+        self.assertEqual(code,130)
+        self.assertEqual(saved['pipeline']['calls'],1)
+        self.assertEqual(saved['pending_action']['command'],'validate')
+        self.assertEqual(output[0]['status'],'CANCELLED')
+
     def test_status_advertises_human_gate(self):
         self.project['stage']='AWAITING_ASSESSMENT_APPROVAL'
         self.assertIn('approve assessment',guide.next_step(self.project))

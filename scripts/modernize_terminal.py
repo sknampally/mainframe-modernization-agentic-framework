@@ -118,7 +118,7 @@ class Terminal:
 
     def report(self, result):
         state=clean(result.get('status','RESULT'))
-        failed=state in {'BLOCKED','REWORK_LIMIT','ASSESSMENT_FAILED','NEEDS_RECONCILIATION','SETUP_INCOMPLETE'}
+        failed=state in {'BLOCKED','REWORK_LIMIT','ASSESSMENT_FAILED','NEEDS_RECONCILIATION','SETUP_INCOMPLETE','CANCELLED'}
         table=Table.grid(padding=(0,2));table.add_column(style='bold');table.add_column(overflow='fold')
         for key,value in result.items():
             if key=='status':continue
