@@ -16,5 +16,9 @@ def get_status() -> dict:
 def echo_required(value: str) -> dict:
     return {'success': True, 'data': {'echo': value}}
 
+@server.tool()
+def reject_create() -> dict:
+    raise ValueError('Synthetic validation rejection; no creation occurred')
+
 if __name__ == '__main__':
     server.run(transport='stdio')

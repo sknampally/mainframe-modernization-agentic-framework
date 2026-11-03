@@ -157,7 +157,7 @@ def ensure_aws_login(project):
     print('AWS profile access verified after sign-in.')
 
 
-def checks(project):
+def checks(project, work=None):
     """No model calls; authentication diagnostics are not printed or saved."""
     tools = ['git', 'aws', 'claude', 'codex' if project['providers']['wireframes'] == 'codex' else 'claude']
     tools.append(project.get('settings', {}).get('transform', {}).get('command', ['uvx'])[0])
@@ -166,6 +166,8 @@ def checks(project):
     missing = sorted({tool for tool in tools if not shutil.which(tool)})
     require(not missing, 'Install missing tools, reopen your terminal, then rerun modernize init: ' + ', '.join(missing) + '\n' + '\n'.join(installation_hint(tool) for tool in missing) +
             '\nFull workstation guide: docs/engineer-setup.md in the framework checkout')
+    from kiro_workflow import mcp_transport
+    mcp_transport(work)
     require(command_ok(['claude', 'auth', 'status']), 'Run claude auth login, then rerun modernize init. See docs/engineer-setup.md for installation and authentication.')
     ensure_aws_login(project)
     if project['providers']['executor'] == 'kiro':
@@ -212,7 +214,7 @@ def guided_init(args):
     # From here all writes and remote setup share the regular project lock.
     with app.locked(work) as project:
         refresh_unstarted_baseline(work, project)
-        checks(project)
+        checks(project, work)
         for key, variable in (('profile', 'AWS_PROFILE'), ('region', 'AWS_DEFAULT_REGION')):
             if project['aws'].get(key): os.environ[variable] = project['aws'][key]
         if project.get('assessments') or project['setup'].get('connector_approved_by'):

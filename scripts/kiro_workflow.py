@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 import shutil
 import signal
 import subprocess
@@ -162,6 +163,28 @@ class RuntimeUnavailable(Blocked):
     pass
 
 
+def blocked_cause(error):
+    if isinstance(error, Blocked): return error
+    for child in getattr(error, 'exceptions', ()):
+        found = blocked_cause(child)
+        if found is not None: return found
+    return None
+
+
+def mcp_transport(directory=None):
+    try:
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+        return ClientSession, StdioServerParameters, stdio_client
+    except ImportError as error:
+        if directory is not None:
+            private_save(Path(directory) / 'mcp-error.json', {'type':type(error).__name__, 'detail':str(error),
+                         'python_executable':sys.executable,'runtime_architecture':platform.machine()})
+        blocked = Blocked('MCP dependency could not load; the package may be missing or use a different CPU architecture.')
+        blocked.hint = 'From the framework checkout run: uv tool install --force --reinstall --managed-python --python 3.12 --editable .'
+        raise blocked from error
+
+
 class Transform:
     """Official AWS MCP SDK transport. Optional dependency imported only when used."""
     def __init__(self, config, directory):
@@ -175,15 +198,13 @@ class Transform:
         except Blocked:
             raise
         except Exception as error:
+            blocked = blocked_cause(error)
+            if blocked is not None: raise blocked from error
             private_save(self.directory / 'mcp-error.json', {'type': type(error).__name__, 'detail': str(error)})
             raise Blocked('AWS MCP transport failed; inspect the private mcp-error.json and reconcile uncertain creation') from error
 
     async def _calls(self, requests):
-        try:
-            from mcp import ClientSession, StdioServerParameters
-            from mcp.client.stdio import stdio_client
-        except ImportError as error:
-            raise Blocked('AWS adapter requires the mcp Python SDK; see the Kiro automation guide') from error
+        ClientSession, StdioServerParameters, stdio_client = mcp_transport(self.directory)
         command = self.config.get('command', ['uvx', 'awslabs.aws-transform-mcp-server@latest'])
         require(isinstance(command, list) and command, 'MCP command must be an argv array')
         env = dict(os.environ)
@@ -193,22 +214,29 @@ class Transform:
         env['AWS_TRANSFORM_MCP_WRITE_DIR'] = str(write_dir)
         parameters = StdioServerParameters(command=command[0], args=command[1:], env=env)
         responses = []
-        async with stdio_client(parameters) as (reader, writer):
-            async with ClientSession(reader, writer) as session:
-                await session.initialize()
-                definitions = {tool.name: tool for tool in (await session.list_tools()).tools}
-                for name, arguments in requests:
-                    require(name in definitions, 'Configured AWS tool unavailable: ' + name)
-                    schema = getattr(definitions[name], 'input_schema', None) or getattr(definitions[name], 'inputSchema', {})
-                    require(all(key in arguments for key in schema.get('required', [])), 'Required AWS tool arguments missing: ' + name)
-                    require(not set(arguments) - set(schema.get('properties', {})), 'Unrecognized AWS arguments; do not guess')
-                    result = await session.call_tool(name, arguments)
-                    require(not getattr(result, 'is_error', getattr(result, 'isError', False)), 'AWS tool returned an error; inspect private receipts')
-                    value = getattr(result, 'structured_content', None) or getattr(result, 'structuredContent', None)
-                    if not value:
-                        text = '\n'.join(block.text for block in result.content if getattr(block, 'type', '') == 'text')
-                        value = json.loads(text)
-                    responses.append(unwrap_mcp(value))
+        log_path = self.directory / 'mcp-server.log'
+        with log_path.open('a') as errlog:
+            log_path.chmod(0o600)
+            async with stdio_client(parameters, errlog=errlog) as (reader, writer):
+                async with ClientSession(reader, writer) as session:
+                    await session.initialize()
+                    definitions = {tool.name: tool for tool in (await session.list_tools()).tools}
+                    for name, arguments in requests:
+                        require(name in definitions, 'Configured AWS tool unavailable: ' + name)
+                        schema = getattr(definitions[name], 'input_schema', None) or getattr(definitions[name], 'inputSchema', {})
+                        require(all(key in arguments for key in schema.get('required', [])), 'Required AWS tool arguments missing: ' + name)
+                        require(not set(arguments) - set(schema.get('properties', {})), 'Unrecognized AWS arguments; do not guess')
+                        result = await session.call_tool(name, arguments)
+                        if getattr(result, 'is_error', getattr(result, 'isError', False)):
+                            private_save(self.directory / 'mcp-tool-error.json', {'tool':name, 'text':'\n'.join(block.text for block in result.content if getattr(block,'type','')=='text')})
+                            error = Blocked('AWS tool rejected the operation; no successful receipt was accepted.')
+                            error.hint = 'Inspect the private mcp-tool-error.json diagnostic. Reconcile any uncertain resource creation before retrying.'
+                            raise error
+                        value = getattr(result, 'structured_content', None) or getattr(result, 'structuredContent', None)
+                        if not value:
+                            text = '\n'.join(block.text for block in result.content if getattr(block, 'type', '') == 'text')
+                            value = json.loads(text)
+                        responses.append(unwrap_mcp(value))
         return responses
 
 

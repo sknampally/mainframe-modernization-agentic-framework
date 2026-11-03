@@ -215,3 +215,20 @@ CardDemo/AWS workflow has been verified on Windows.
 | Error reason hidden | Use `/privacy` locally to reveal diagnostics; avoid sharing private output during a presentation |
 
 Continue with the [terminal guide](terminal-console.md) and [execution guide](cli-guide.md).
+
+## Mac CPU architecture and MCP dependency failures
+
+On Apple Silicon, a universal system Python can launch with a different architecture
+than Intel uv installed for Rosetta. Native packages such as pydantic-core then fail
+to import before the MCP server starts. Prefer uv-managed Python to keep the runtime
+and installed wheels consistent:
+
+```bash
+uv python install 3.12
+uv tool install --force --reinstall --managed-python --python 3.12 --editable .
+```
+
+Reframe checks MCP imports early and shows this repair hint even with presentation
+privacy enabled. Technical import details and MCP server stderr stay in private
+workspace logs; they are not client-presentation output. Never share these logs
+without reviewing/redacting account and authentication information.

@@ -86,6 +86,12 @@ class TerminalTests(unittest.TestCase):
             with self.assertRaisesRegex(Blocked,'single value'):ui.ask('Workspace ID')
         session.return_value.prompt.assert_called_once()
 
+    def test_safe_remediation_visible_with_privacy_enabled(self):
+        ui=self.ui()
+        ui.report({'status':'BLOCKED','reason':'private/path/diagnostic','hint':'Reinstall using a managed Python'})
+        self.assertNotIn('private/path/diagnostic',self.output.getvalue())
+        self.assertIn('Reinstall using a managed Python',self.output.getvalue())
+
     def test_reporter_avoids_json_dump(self):
         import modernize
         results=[]

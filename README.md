@@ -21,7 +21,7 @@ Git checkout, configure your own AWS/provider access, and use the built-in proto
 No custom prompt writing or manual agent handoffs are required for normal operation.
 
 ```bash
-uv tool install --force --python 3.12 --editable .
+uv tool install --force --managed-python --python 3.12 --editable .
 modernize
 ```
 

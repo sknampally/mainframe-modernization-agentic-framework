@@ -175,7 +175,8 @@ def setup(work, project, args, client=None):
     if args.create_connector and not project['setup'].get('connector_id'):
         result = mutation(work, project, 'connector', lambda: client.calls([('create_connector', {
             'workspaceId': config['workspace_id'], 'connectorName': args.create_connector,
-            'connectorType': 'S3', 'configuration': {'s3Uri': config['upload_prefix']},
+            'connectorType': config.get('connector_type', 'mainframe_modernization|s3|2'),
+            'configuration': {'s3BucketArn': 'arn:' + identity.get('Arn', 'arn:aws:').split(':')[1] + ':s3:::' + bucket},
             'awsAccountId': identity['Account']})])[0])
         require(result.get('connectorId'), 'Connector receipt has no identity; reconcile privately')
         project['setup']['connector_id'] = result['connectorId']
@@ -759,7 +760,9 @@ def main(argv=None, reporter=None):
         emit(result)
         return 130
     except (Blocked, OSError, ValueError, KeyError, EOFError, subprocess.SubprocessError) as error:
-        emit({'status': 'BLOCKED', 'reason': str(error)})
+        result = {'status': 'BLOCKED', 'reason': str(error)}
+        if getattr(error, 'hint', None): result['hint'] = error.hint
+        emit(result)
         return 2
 
 

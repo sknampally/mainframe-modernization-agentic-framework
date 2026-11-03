@@ -220,3 +220,16 @@ continue only when its next step is `modernize assess`.
 See the [execution guide](cli-guide.md) for assessment, comparison, approval,
 validation, HTML review and packaging. Installing tools is not a live workflow
 acceptance result; CardDemo/AWS acceptance remains pending.
+
+If MCP fails to load on a Mac with mixed Intel/Apple Silicon tools, use a uv-managed
+Python and reinstall native dependencies:
+
+```bash
+uv python install 3.12
+uv tool install --force --reinstall --managed-python --python 3.12 --editable .
+```
+
+The runtime and native extension architectures must match. Reframe's MCP preflight
+checks this before cloud setup and provides a safe repair hint. Detailed SDK errors
+and MCP server diagnostics are kept in the private workspace, not printed as raw
+cloud identity output.

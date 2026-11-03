@@ -196,6 +196,15 @@ class GuidedTests(unittest.TestCase):
             with self.assertRaisesRegex(Blocked,'baseline exists'):guide.refresh_unstarted_baseline(self.work,project)
         self.assertEqual(project['framework_commit'],'old')
 
+    def test_dependency_failure_provides_safe_install_hint(self):
+        import kiro_workflow as flow
+        with patch.dict(sys.modules,{'mcp':None}):
+            with self.assertRaises(Blocked) as raised:flow.mcp_transport(self.work)
+        self.assertIn('--managed-python',raised.exception.hint)
+        saved=app.read(self.work/'mcp-error.json')
+        self.assertIn('runtime_architecture',saved)
+        self.assertEqual((self.work/'mcp-error.json').stat().st_mode & 0o777,0o600)
+
     def test_status_advertises_human_gate(self):
         self.project['stage']='AWAITING_ASSESSMENT_APPROVAL'
         self.assertIn('approve assessment',guide.next_step(self.project))
