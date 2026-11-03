@@ -15,6 +15,8 @@ has passed an unattended assessment. This checklist records that distinction.
 | Job creation requires an orchestrator omitted by the advertised schema | Discover the unique service-returned mainframe orchestrator before uploading; ambiguity blocks creation | Live discovery observed; offline discovery/ambiguity tests |
 | Job exists but no assessment plan starts | Recognized onboarding prompts trigger a complete assessment-only capability selection using the pinned source, scope and connector | Offline message and recovery tests; fresh CLI-only live acceptance pending |
 | AWS asks to repeat capability selection | Send the full named capability set with existing job/source context; maximum two distinct onboarding responses | Bounded attempts, private intent/receipt and uncertain-send reconciliation tests |
+| Kickoff asks for the already uploaded source location | Submit only the recorded ZIP URI to the recognized source-location task after checking its identity, schema and local archive checksum | Offline submission/resume tests; no change to optional chat/features or other task types |
+| Non-blocking collaborator invitation remains open | Leave the invitation untouched and continue assessment polling | Offline regression test; blocking approvals still pause |
 | Job reports EXECUTING while a human task is pending | Pause for the task; never infer generated-deliverable approval | Offline regression tests |
 | Tool reports failure inside a successful transport envelope | Save the raw tool response privately before returning an error | Local diagnostics; raw responses are never public evidence |
 
@@ -41,7 +43,7 @@ the service trust relationship.
 
 ## Release acceptance still required
 
-- Complete kickoff source configuration and every assessment capability through
+- Verify kickoff source configuration and every assessment capability through
   documented CLI paths. Any required console task must be identified and explained.
 - Preserve explicit human decisions for scope changes and generated deliverables;
   distinguish those decisions from mechanical source configuration.
