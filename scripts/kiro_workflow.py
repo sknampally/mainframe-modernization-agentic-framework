@@ -236,7 +236,11 @@ class Transform:
                         if not value:
                             text = '\n'.join(block.text for block in result.content if getattr(block, 'type', '') == 'text')
                             value = json.loads(text)
-                        responses.append(unwrap_mcp(value))
+                        try:
+                            responses.append(unwrap_mcp(value))
+                        except Blocked:
+                            private_save(self.directory / 'mcp-tool-error.json', {'tool': name, 'response': value})
+                            raise
         return responses
 
 
@@ -303,6 +307,91 @@ def nested_job(value):
     raise Blocked('Job identity/status could not be established from the AWS response')
 
 
+def select_orchestrator(run, client):
+    config = run['settings']['transform']
+    if config.get('orchestrator_agent'):
+        return config['orchestrator_agent']
+    listing = client.calls([('list_resources', {'resource':'agents','agentType':'ORCHESTRATOR_AGENT'})])[0]
+    candidates = [item for item in listing.get('items', []) if isinstance(item, dict)
+                  and item.get('type') == 'ORCHESTRATOR_AGENT' and item.get('jobOrchestrator') is True
+                  and item.get('ownerType') == 'INTERNAL_AGENT' and 'mainframe' in str(item.get('name','')).lower()]
+    require(len(candidates) == 1, 'No unique AWS mainframe orchestrator discovered. Select a service-returned orchestrator_agent in private settings before creating a job.')
+    agent = candidates[0]['name']
+    require(isinstance(agent,str) and agent and all(c.isalnum() or c in '-_' for c in agent), 'Invalid service agent identifier')
+    config['orchestrator_agent'] = agent
+    run['events'].append({'event':'orchestrator_discovered','name':agent})
+    return agent
+
+
+def bootstrap_assessment_plan(run, directory, client, identity, snapshot):
+    """Select the agreed capabilities through job chat, never approve a deliverable.
+
+    Only recognized onboarding prompts trigger this adapter. The message is built
+    from the pinned run, not from instructions in source files or AWS chat text.
+    An uncertain send must be reconciled before another mutation is attempted.
+    """
+    if snapshot.get('plan', {}).get('steps'):
+        return False
+    messages = snapshot.get('messages', {}).get('messages', [])
+    system = [m for m in messages if m.get('messageOrigin') == 'SYSTEM'
+              and m.get('processingInfo', {}).get('messageType') == 'FINAL_RESPONSE']
+    if not system:
+        return False
+    latest = max(system, key=lambda m: str(m.get('createdAt', '')))
+    text = latest.get('text', '').lower()
+    recognized = (('custom' in text and ('capabilities' in text or 'job plan' in text))
+                  or ('please confirm' in text and 'assessment-only' in text))
+    if not recognized:
+        return False
+    progress = run.setdefault('plan_bootstrap', {'sent_messages': [], 'attempts': 0})
+    message_id = latest.get('messageId')
+    require(message_id, 'Plan onboarding response has no message identity; inspect privately')
+    if progress.get('pending') and progress.get('pending_attempt') and progress.get('pending_message'):
+        receipt = directory / f"plan-bootstrap-{progress['pending_attempt']}-receipt.json"
+        if receipt.is_file():
+            progress['sent_messages'].append(progress['pending_message'])
+            progress.update(pending=False, attempts=progress['pending_attempt'])
+            private_save(directory / 'run.json', run)
+    if progress.get('pending'):
+        run['status'] = 'NEEDS_RECONCILIATION'
+        run['reason'] = 'Assessment plan message outcome is uncertain. Reconcile job chat before sending again.'
+        return True
+    if message_id in progress['sent_messages']:
+        return False
+    if progress['attempts'] >= 2:
+        run['status'] = 'WAITING_FOR_HUMAN'
+        run['reason'] = 'AWS plan onboarding did not finish after two bounded attempts; inspect the private assessment status.'
+        return True
+    config = run['settings']['transform']
+    connector = config.get('connector_id')
+    source = run.get('uploaded_source', {}).get('uri')
+    require(connector and source, 'Plan setup requires the recorded connector_id and uploaded source URI; do not guess inputs')
+    message = (
+        'Use the EXISTING job ' + identity['jobId'] + ' in workspace ' + identity['workspaceId'] +
+        '. Do not create or switch jobs. Select option 3, custom ASSESSMENT-ONLY plan. '
+        'Confirm these explicit capabilities: Analyze code; Analyze data (where supported inputs exist); '
+        'Generate technical documentation; Extract business logic; Decompose code (boundaries/seeds only); '
+        'Plan test cases (draft only). This capability selection is confirmed: generate the plan and proceed. '
+        'Use existing active connector ' + connector + ' and source archive ' + source +
+        '. Pinned source commit: ' + run['source']['commit'] + '. Scope: ' + run['objective'] +
+        '. No application implementation, reimagination, deployment, new infrastructure or additional jobs. '
+        'Preserve required human approval of generated deliverables. This is capability selection, not deliverable approval.')
+    require(len(message) <= 7000, 'Assessment scope exceeds AWS job chat limit')
+    attempt = progress['attempts'] + 1
+    private_save(directory / f'plan-bootstrap-{attempt}-intent.json', {'reply_to': message_id, 'text': message})
+    progress.update(pending=True, pending_attempt=attempt, pending_message=message_id)
+    private_save(directory / 'run.json', run)
+    response = client.calls([('load_instructions', identity),
+                             ('send_message', {**identity, 'text': message, 'skipPolling': True})])[-1]
+    private_save(directory / f'plan-bootstrap-{attempt}-receipt.json', response)
+    progress.update(pending=False, attempts=attempt)
+    progress['sent_messages'].append(message_id)
+    run['status'] = 'WAITING_FOR_ASSESSMENT'
+    run['reason'] = 'Assessment-only plan selection sent; resume to check the same job.'
+    private_save(directory / 'run.json', run)
+    return True
+
+
 def assessment_step(run, directory, client=None):
     if run['assessment_ready']:
         return
@@ -329,6 +418,7 @@ def assessment_step(run, directory, client=None):
             return
         require(config.get('upload_prefix', '').startswith('s3://'), 'New jobs require a configured private S3 upload prefix')
         client.calls([('get_status', {})])  # Establish transport before upload; service authorization may still fail.
+        select_orchestrator(run, client)  # Live service requires this even when MCP marks it optional.
         root = source_ok(run)
         archive = directory / 'source.zip'
         total = 0
@@ -377,7 +467,13 @@ def assessment_step(run, directory, client=None):
     details = job.get('statusDetails', {})
     status = str(job.get('status') or (details.get('status') if isinstance(details, dict) else details) or 'UNKNOWN').upper()
     run['events'].append({'at': time.time(), 'event': 'assessment_status', 'status': status})
-    if status in {'COMPLETED', 'SUCCEEDED'}:
+    task_container = snapshot.get('tasks', {})
+    tasks = task_container.get('hitlTasks', []) if isinstance(task_container, dict) else task_container if isinstance(task_container, list) else []
+    pending = any(isinstance(task, dict) and task.get('status') in {'AWAITING_HUMAN_INPUT','PENDING_HUMAN_INPUT','AWAITING_APPROVAL'} for task in tasks)
+    if pending or snapshot.get('_pollingGuidance', {}).get('hasPendingTasks') is True:
+        run['status'] = 'WAITING_FOR_HUMAN'
+        run['reason'] = 'AWS has a pending human task even though the overall job may still be executing. Complete the authorized task, then resume.'
+    elif status in {'COMPLETED', 'SUCCEEDED'}:
         # Export paths vary by workflow. Ingest explicit configured output, never guess an artifact ID.
         output = config.get('output_location')
         if output:
@@ -390,6 +486,8 @@ def assessment_step(run, directory, client=None):
         run['reason'] = 'AWS Transform requires a human task decision. Complete it in the authorized UI, then resume this run.'
     elif status in {'FAILED', 'STOPPED', 'CANCELLED'}:
         run['status'] = 'ASSESSMENT_FAILED'
+    elif bootstrap_assessment_plan(run, directory, client, identity, snapshot):
+        return
     else:
         run['status'] = 'WAITING_FOR_ASSESSMENT'
         run['reason'] = 'Job continues in AWS; resume or use --wait/--detach to monitor the same job.'

@@ -189,7 +189,20 @@ def setup(work, project, args, client=None):
         # Activation response is retained, but operator must confirm readiness rather than guessing status fields.
     if args.connector_approved:
         require(project['setup'].get('connector_id'), 'No connector to confirm')
+    if args.connector_approved or project['setup'].get('connector_approved_by') or args.role_arn:
+        record = client.calls([('get_resource', {'resource': 'connector', 'workspaceId': config['workspace_id'],
+                              'connectorId': project['setup']['connector_id']})])[0]
+        write(work / 'connector-readiness.json', record)
+        connection = record.get('accountConnection', {}).get('awsAccountConnection', {})
+        require(connection.get('status') == 'ACTIVE',
+                'AWS has not activated the connector. Complete administrator activation and rerun setup; confirmation alone is insufficient.')
+        require(connection.get('accountId') == identity['Account'], 'Connector account does not match the selected AWS profile')
+        if args.role_arn:
+            require(connection.get('roleArn') == args.role_arn, 'AWS connector role differs from the requested role')
+    if args.connector_approved:
         project['setup']['connector_approved_by'] = args.connector_approved
+    if project['setup'].get('connector_id'):
+        config['connector_id'] = project['setup']['connector_id']
     project['stage'] = 'READY_TO_ASSESS' if project['setup'].get('connector_approved_by') else 'WAITING_FOR_CONNECTOR_APPROVAL'
     persist(work, project)
     return {'status': project['stage'], 'verification_link': project['setup'].get('verification_link')}
@@ -207,6 +220,8 @@ def assessment(work, project, args, client=None):
         if not args.findings:
             require(args.allow_new_assessment, 'Use --allow-new-assessment to authorize this new job and source upload')
             require(project['setup'].get('connector_approved_by'), 'Complete setup and confirm connector activation first')
+            require(project['setup'].get('connector_id'), 'Complete connector setup before starting an assessment')
+            project['settings']['transform']['connector_id'] = project['setup']['connector_id']
         settings_file = work / 'run-settings.json'
         write(settings_file, project['settings'])
         directory = kw.initialize(SimpleNamespace(source=project['source']['root'], workspace=str(work),

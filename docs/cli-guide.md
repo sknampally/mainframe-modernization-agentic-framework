@@ -13,6 +13,10 @@ four-phase acceptance path. Full live AWS/Kiro/Claude Code/Codex workflow accept
 Python 3.10+ on macOS/Linux is required; Windows is not supported by the current
 file-lock/process-group implementation. Run from a clean committed framework checkout.
 
+See [live assessment readiness](live-assessment-readiness.md) for the recovery
+steps implemented in the CLI, administrator boundaries and remaining acceptance
+checks. A manually recovered cloud run is not a CLI-only acceptance result.
+
 ## Start here: guided CLI
 
 Prefer a menu interface? Launch `modernize` for the [Reframe terminal console](terminal-console.md).
@@ -53,7 +57,8 @@ name is separate from the AWS CLI profile. Connection is rechecked before resour
 questions appear. No MCP client JSON or manual configuration file is needed for
 normal setup. An advanced file option accepts only a path to authentication arguments,
 never an `mcpServers` client configuration. The guide then offers existing or new AWS resources. It asks for confirmation before creating resources.
-It presents the connector activation link, requires the operator's confirmation,
+It presents the connector activation link, requires the operator's confirmation
+and verifies that AWS reports the connector ACTIVE in the selected account,
 and suggests `modernize assess` only when setup is ready. Administrator activation
 and Transform application authentication remain real boundaries. No assessment job
 starts during `init`. Rerun `modernize init` to continue incomplete setup without
@@ -82,6 +87,12 @@ resume selects the active run and never invents one. If a validation or HTML-gen
 source-upload/job authorization. Approvals prompt for owner, rationale and source
 provenance confirmation; they are never inferred. Validation approval after SME
 questions remains an explicit gate before HTML generation.
+
+When a new job asks for its initial custom plan, the controller sends the six
+assessment capability names with the saved source, connector and scope. It records
+each message before sending and retains its receipt. Resume uses the same job;
+uncertain sends require reconciliation. Plan selection never approves generated
+deliverables, and unknown onboarding prompts are not automatically answered.
 
 For the experiment, use `modernize assess` twice after the first completes, then
 `modernize compare --left run-1 --right run-2`. Optional `--label` still selects names.

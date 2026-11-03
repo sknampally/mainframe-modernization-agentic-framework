@@ -141,10 +141,115 @@ class WorkflowTests(unittest.TestCase):
 
     def prepare_job(self):
         run = self.load(); run['assessment_input'] = None
-        run['settings']['transform'] = {'workspace_id':'fixture-workspace'}
+        run['settings']['transform'] = {'workspace_id':'fixture-workspace', 'orchestrator_agent':'fixture-mainframe'}
         run['job_id'] = 'fixture-job'
         self.store(run)
         return run
+
+    def test_mainframe_orchestrator_discovered_from_service(self):
+        run=self.load();run['settings']['transform']={}
+        class Client:
+            def calls(self,requests):return [{'items':[{'name':'fixture-mainframe-v2','type':'ORCHESTRATOR_AGENT','jobOrchestrator':True,'ownerType':'INTERNAL_AGENT'}]}]
+        self.assertEqual(flow.select_orchestrator(run,Client()),'fixture-mainframe-v2')
+        self.assertEqual(run['settings']['transform']['orchestrator_agent'],'fixture-mainframe-v2')
+
+    def test_ambiguous_orchestrators_not_guessed(self):
+        run=self.load();run['settings']['transform']={}
+        class Client:
+            def calls(self,requests):return [{'items':[{'name':name,'type':'ORCHESTRATOR_AGENT','jobOrchestrator':True,'ownerType':'INTERNAL_AGENT'} for name in ['mainframe-one','mainframe-two']]}]
+        with self.assertRaisesRegex(flow.Blocked,'No unique'):flow.select_orchestrator(run,Client())
+
+    def test_explicit_orchestrator_never_discovered_again(self):
+        run=self.load();run['settings']['transform']={'orchestrator_agent':'fixture-pinned'}
+        class Client:
+            def calls(self,requests):raise AssertionError('No discovery')
+        self.assertEqual(flow.select_orchestrator(run,Client()),'fixture-pinned')
+
+    def test_pending_task_pauses_even_when_job_is_executing(self):
+        self.prepare_job()
+        class Client:
+            def calls(self,requests):return [{}, {'job':{'job':{'jobId':'fixture-job','statusDetails':{'status':'EXECUTING'}}},'tasks':{'hitlTasks':[{'status':'AWAITING_HUMAN_INPUT'}]}}]
+        self.assertEqual(flow.drive(self.directory,transform=Client())['status'],'WAITING_FOR_HUMAN')
+
+    def onboarding(self):
+        run = self.prepare_job()
+        run['settings']['transform']['connector_id'] = 'fixture-connector'
+        run['uploaded_source'] = {'uri': 's3://fixture-bucket/source.zip'}
+        snapshot = {'plan': {'steps': []}, 'messages': {'messages': [
+            {'messageId':'new', 'createdAt':'2026-11-03', 'messageOrigin':'SYSTEM',
+             'processingInfo':{'messageType':'FINAL_RESPONSE'},
+             'text':'Please confirm custom assessment-only capabilities'},
+            {'messageId':'old', 'createdAt':'2026-11-02', 'messageOrigin':'SYSTEM',
+             'processingInfo':{'messageType':'FINAL_RESPONSE'}, 'text':'Old greeting'}]}}
+        return run, snapshot, {'workspaceId':'fixture-workspace','jobId':'fixture-job'}
+
+    def test_plan_selection_uses_pinned_context_and_never_repeats_same_reply(self):
+        run, snapshot, identity = self.onboarding()
+        calls = []
+        class Client:
+            def calls(self, requests):
+                calls.extend(requests)
+                return [{}, {'accepted':True}]
+        self.assertTrue(flow.bootstrap_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        self.assertFalse(flow.bootstrap_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        self.assertEqual([name for name,_ in calls],['load_instructions','send_message'])
+        sent = calls[-1][1]['text']
+        for value in ['fixture-job','fixture-connector','s3://fixture-bucket/source.zip',self.commit,
+                      'Validate one rule','Analyze code','Extract business logic','not deliverable approval']:
+            self.assertIn(value,sent)
+        self.assertTrue((self.directory/'plan-bootstrap-1-receipt.json').exists())
+
+    def test_uncertain_plan_message_requires_reconciliation(self):
+        run, snapshot, identity = self.onboarding()
+        class Client:
+            def calls(self, requests): raise flow.Blocked('Lost response')
+        with self.assertRaises(flow.Blocked):
+            flow.bootstrap_assessment_plan(run,self.directory,Client(),identity,snapshot)
+        recovered = self.load()
+        self.assertTrue(flow.bootstrap_assessment_plan(recovered,self.directory,Client(),identity,snapshot))
+        self.assertEqual(recovered['status'],'NEEDS_RECONCILIATION')
+
+    def test_existing_plan_and_unrecognized_chat_never_trigger_selection(self):
+        run, snapshot, identity = self.onboarding()
+        class Client:
+            def calls(self, requests): raise AssertionError('No chat mutation expected')
+        snapshot['plan']['steps'] = [{'stepName':'Kick off'}]
+        self.assertFalse(flow.bootstrap_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        snapshot['plan']['steps'] = []
+        snapshot['messages']['messages'][0]['text'] = 'Approve the generated business rules and deploy'
+        self.assertFalse(flow.bootstrap_assessment_plan(run,self.directory,Client(),identity,snapshot))
+
+    def test_plan_message_receipt_recovers_after_local_state_write_interruption(self):
+        run, snapshot, identity = self.onboarding()
+        run['plan_bootstrap'] = {'pending':True,'pending_attempt':1,'pending_message':'new',
+                                 'attempts':0,'sent_messages':[]}
+        flow.private_save(self.directory/'plan-bootstrap-1-receipt.json',{'accepted':True})
+        class Client:
+            def calls(self, requests): raise AssertionError('Successful message must not be repeated')
+        self.assertFalse(flow.bootstrap_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        self.assertFalse(run['plan_bootstrap']['pending'])
+        self.assertEqual(run['plan_bootstrap']['attempts'],1)
+
+    def test_deliverable_task_prevents_plan_chat_mutation(self):
+        run,snapshot,identity=self.onboarding()
+        self.store(run)
+        snapshot.update(job={'jobId':'fixture-job','status':'EXECUTING'},
+                        tasks={'hitlTasks':[{'status':'AWAITING_APPROVAL'}]})
+        class Client:
+            def calls(self, requests):
+                assert [key for key,_ in requests] == ['load_instructions','get_job_status']
+                return [{},snapshot]
+        self.assertEqual(flow.drive(self.directory,transform=Client())['status'],'WAITING_FOR_HUMAN')
+
+    def test_repeated_onboarding_is_bounded(self):
+        run, snapshot, identity = self.onboarding()
+        class Client:
+            def calls(self, requests): return [{}, {'accepted':True}]
+        for number in range(3):
+            snapshot['messages']['messages'][0]['messageId'] = str(number)
+            flow.bootstrap_assessment_plan(run,self.directory,Client(),identity,snapshot)
+        self.assertEqual(run['plan_bootstrap']['attempts'],2)
+        self.assertEqual(run['status'],'WAITING_FOR_HUMAN')
 
     def test_aws_job_wait_and_resume_reuses_job(self):
         self.prepare_job()

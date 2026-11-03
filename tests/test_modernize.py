@@ -300,7 +300,8 @@ class PreparationTests(unittest.TestCase):
 
     def test_source_archive_is_identical_despite_mtime_changes(self):
         self.project['setup']['connector_approved_by'] = 'Fixture admin'
-        self.project['settings']['transform'] = {'workspace_id':'fixture-workspace','upload_prefix':'s3://fixture-private/source'}
+        self.project['setup']['connector_id'] = 'fixture-connector'
+        self.project['settings']['transform'] = {'workspace_id':'fixture-workspace','upload_prefix':'s3://fixture-private/source','orchestrator_agent':'fixture-mainframe'}
         class Client:
             def calls(self, requests):
                 return [{'job':{'jobId':'fixture-job','status':'RUNNING'}} if key in {'create_job','get_job_status'} else {}
@@ -347,7 +348,8 @@ class PreparationTests(unittest.TestCase):
             def calls(self, requests):
                 calls.extend(requests)
                 values = {'get_status':{}, 'create_workspace':{'workspaceId':'fixture-workspace'},
-                          'create_connector':{'connectorId':'fixture-connector','verificationLink':'https://example.invalid/verify'}}
+                          'create_connector':{'connectorId':'fixture-connector','verificationLink':'https://example.invalid/verify'},
+                          'get_resource':{'accountConnection':{'awsAccountConnection':{'status':'ACTIVE','accountId':'fixture-account'}}}}
                 return [values[key] for key, value in requests]
         def aws(project, *args):
             if args[:2] == ('sts','get-caller-identity'): return {'Account':'fixture-account'}
@@ -362,11 +364,30 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(first['status'], 'WAITING_FOR_CONNECTOR_APPROVAL')
         self.assertEqual(second['status'], 'WAITING_FOR_CONNECTOR_APPROVAL')
         self.assertEqual(approved['status'], 'READY_TO_ASSESS')
+        self.assertEqual(self.project['settings']['transform']['connector_id'], 'fixture-connector')
         self.assertEqual([key for key, value in calls].count('create_workspace'), 1)
         self.assertEqual([key for key, value in calls].count('create_connector'), 1)
         connector=next(value for key,value in calls if key=='create_connector')
         self.assertEqual(connector['connectorType'],'mainframe_modernization|s3|2')
         self.assertEqual(connector['configuration'],{'s3BucketArn':'arn:aws:s3:::fixture-private'})
+
+    def test_operator_confirmation_cannot_override_aws_connector_readiness(self):
+        self.project['aws'].update(bucket='fixture-private', region='us-east-1')
+        self.project['settings']['transform']['workspace_id'] = 'fixture-workspace'
+        self.project['setup']['connector_id'] = 'fixture-connector'
+        for connection in [{'status':'PENDING','accountId':'fixture-account'},
+                           {'status':'ACTIVE','accountId':'other-account'}]:
+            with self.subTest(connection=connection):
+                class Client:
+                    def calls(self, requests):
+                        return [{'accountConnection':{'awsAccountConnection':connection}} if key == 'get_resource' else {}
+                                for key,_ in requests]
+                public = {'PublicAccessBlockConfiguration': {k:True for k in
+                          ('BlockPublicAcls','IgnorePublicAcls','BlockPublicPolicy','RestrictPublicBuckets')}}
+                with patch.object(app,'aws',side_effect=[{'Account':'fixture-account'}, {}, public]):
+                    with self.assertRaises(pilot.Blocked):
+                        app.setup(self.work,self.project,self.args('setup','--connector-approved','Fixture admin'),Client())
+                self.assertNotIn('connector_approved_by',self.project['setup'])
 
     def test_setup_rejects_existing_public_bucket(self):
         self.project['aws'].update(bucket='fixture-private', region='us-east-1')
