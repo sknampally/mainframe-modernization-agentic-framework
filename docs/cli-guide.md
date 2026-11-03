@@ -35,7 +35,10 @@ an active run. This is not yet a standalone distributable wheel.
 `init` guides you through the private workspace, local Git checkout or GitHub URL,
 source revision, business scope, AWS profile/region/bucket, executor runtime and HTML
 provider. It saves choices outside Git and checks required executables, Claude login,
-AWS credentials and selected runtime authentication. Missing tools/logins produce
+AWS credentials and selected runtime authentication. AWS profile access is checked
+after profile/region selection; setup offers SSO configuration or sign-in when
+needed and rechecks access before advancing. Declined/failed login stops setup.
+Missing tools or other provider logins produce
 instructions; it does not install software or collect credentials. Kiro is checked
 only when selected. Codex login is checked when selected. The default pair remains
 Claude Sonnet executor and Claude Opus reviewer.

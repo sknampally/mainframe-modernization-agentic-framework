@@ -77,7 +77,7 @@ class GuidedTests(unittest.TestCase):
             self.assertEqual(args.bucket,'fixture-bucket')
             app.write(work/'project.json',project)
         answers=[str(self.work),'/fixture/source','Fixture scope','fixture','us-east-1','fixture-bucket','claude','codex','yes','no']
-        with patch.object(sys.stdin,'isatty',return_value=True),patch('builtins.input',side_effect=answers),patch.object(app,'initialize',side_effect=initialize),patch.object(guide,'checks'):
+        with patch.object(sys.stdin,'isatty',return_value=True),patch('builtins.input',side_effect=answers),patch.object(app,'initialize',side_effect=initialize),patch.object(guide,'checks'),patch.object(guide,'ensure_aws_login'):
             result=guide.guided_init(self.args('init'))
         self.assertEqual(result['status'],'SETUP_INCOMPLETE')
         self.assertEqual(result['next_step'],'modernize init')
@@ -114,6 +114,39 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(saved['pipeline']['calls'],1)
         self.assertEqual(saved['pending_action']['command'],'validate')
         self.assertEqual(output[0]['status'],'CANCELLED')
+
+    def test_valid_aws_session_does_not_launch_login(self):
+        with patch.object(guide.shutil,'which',return_value='/fixture/aws'),patch.object(guide,'command_ok',return_value=True),patch.object(guide.subprocess,'run') as run:
+            guide.ensure_aws_login(self.project)
+        run.assert_not_called()
+
+    def test_expired_sso_session_logs_in_and_rechecks_identity(self):
+        with patch.object(guide.shutil,'which',return_value='/fixture/aws'),patch.object(sys.stdin,'isatty',return_value=True),patch.object(guide,'command_ok',side_effect=[False,True,True]) as verify,patch.object(guide,'yes',return_value=True),patch.object(guide.subprocess,'run',return_value=argparse.Namespace(returncode=0)) as run:
+            guide.ensure_aws_login(self.project)
+        command=run.call_args.args[0]
+        self.assertEqual(command[-2:],['sso','login'])
+        self.assertEqual(command[command.index('--profile')+1],'fixture')
+        self.assertEqual(verify.call_args_list[-1].args[0][-2:],['sts','get-caller-identity'])
+
+    def test_declined_login_stops_before_aws_login(self):
+        with patch.object(guide.shutil,'which',return_value='/fixture/aws'),patch.object(sys.stdin,'isatty',return_value=True),patch.object(guide,'command_ok',side_effect=[False,True]),patch.object(guide,'yes',return_value=False),patch.object(guide.subprocess,'run') as run:
+            with self.assertRaisesRegex(Blocked,'deferred'):guide.ensure_aws_login(self.project)
+        run.assert_not_called()
+
+    def test_login_success_without_identity_access_blocks(self):
+        with patch.object(guide.shutil,'which',return_value='/fixture/aws'),patch.object(sys.stdin,'isatty',return_value=True),patch.object(guide,'command_ok',side_effect=[False,True,False]),patch.object(guide,'yes',return_value=True),patch.object(guide.subprocess,'run',return_value=argparse.Namespace(returncode=0)):
+            with self.assertRaisesRegex(Blocked,'still unverified'):guide.ensure_aws_login(self.project)
+
+    def test_scripted_login_never_prompts_or_opens_browser(self):
+        with patch.object(guide.shutil,'which',return_value='/fixture/aws'),patch.object(sys.stdin,'isatty',return_value=False),patch.object(guide,'command_ok',return_value=False),patch.object(guide.subprocess,'run') as run:
+            with self.assertRaisesRegex(Blocked,'authentication is required'):guide.ensure_aws_login(self.project)
+        run.assert_not_called()
+
+    def test_unconfigured_sso_requires_explicit_configuration_choice(self):
+        with patch.object(guide.shutil,'which',return_value='/fixture/aws'),patch.object(sys.stdin,'isatty',return_value=True),patch.object(guide,'command_ok',side_effect=[False,False,False,True]),patch.object(guide,'yes',side_effect=[True,True]),patch.object(guide.subprocess,'run',return_value=argparse.Namespace(returncode=0)) as run:
+            guide.ensure_aws_login(self.project)
+        self.assertEqual(run.call_args_list[0].args[0][-2:],['configure','sso'])
+        self.assertEqual(run.call_args_list[1].args[0][-2:],['sso','login'])
 
     def test_status_advertises_human_gate(self):
         self.project['stage']='AWAITING_ASSESSMENT_APPROVAL'

@@ -70,6 +70,15 @@ The same guide covers macOS installation without administrator privileges. Confi
 
 ## 3. Configure an AWS profile and sign in
 
+Guided `modernize init` can perform this step with you. After you select the profile
+and region, it checks access. For an expired/missing SSO session it offers to run
+`aws sso login` for that exact profile, waits for the AWS browser flow and verifies
+identity access again before continuing. If no SSO configuration is detected, it
+offers `aws configure sso` first. Existing non-SSO profiles are changed only if you
+explicitly choose SSO configuration. In unattended mode, no login browser is opened.
+
+To configure/sign in manually instead:
+
 For an organization using IAM Identity Center, obtain the access portal/start URL,
 SSO region, allowed account and permission set from its AWS administrator. These are
 organization-specific inputs; the framework cannot invent them.
