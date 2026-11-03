@@ -364,6 +364,9 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(approved['status'], 'READY_TO_ASSESS')
         self.assertEqual([key for key, value in calls].count('create_workspace'), 1)
         self.assertEqual([key for key, value in calls].count('create_connector'), 1)
+        connector=next(value for key,value in calls if key=='create_connector')
+        self.assertEqual(connector['connectorType'],'mainframe_modernization|s3|2')
+        self.assertEqual(connector['configuration'],{'s3BucketArn':'arn:aws:s3:::fixture-private'})
 
     def test_setup_rejects_existing_public_bucket(self):
         self.project['aws'].update(bucket='fixture-private', region='us-east-1')

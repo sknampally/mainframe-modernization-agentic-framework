@@ -371,3 +371,10 @@ Official integration references:
 [AWS Transform developer tools](https://docs.aws.amazon.com/transform/latest/userguide/developer-tools.html).
 
 Model selection reference: [Claude Code model configuration](https://code.claude.com/docs/en/model-config). Different Claude models can still share blind spots; source checks and human gates remain required.
+
+The mainframe connector adapter uses the service's mainframe S3 connector type and
+`s3BucketArn` configuration field, verified during live setup. A private
+`transform.connector_type` override is available for a tested service variant.
+Connector creation and activation are distinct: a pending connector cannot be used
+to assess source. Service-side tool rejections are saved separately from transport
+errors for private troubleshooting and safe reconciliation.

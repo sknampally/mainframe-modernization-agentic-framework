@@ -25,5 +25,13 @@ class MCPTransportTests(unittest.TestCase):
         with self.assertRaises(Blocked):
             self.client.calls([('echo_required', {})])
 
+    def test_service_rejection_is_preserved_and_saved_privately(self):
+        with self.assertRaisesRegex(Blocked, 'AWS tool rejected') as raised:
+            self.client.calls([('reject_create', {})])
+        self.assertIn('mcp-tool-error.json',raised.exception.hint)
+        path=self.client.directory / 'mcp-tool-error.json'
+        self.assertTrue(path.exists())
+        self.assertEqual(path.stat().st_mode & 0o777,0o600)
+
 if __name__ == '__main__':
     unittest.main()

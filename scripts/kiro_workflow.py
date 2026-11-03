@@ -163,6 +163,14 @@ class RuntimeUnavailable(Blocked):
     pass
 
 
+def blocked_cause(error):
+    if isinstance(error, Blocked): return error
+    for child in getattr(error, 'exceptions', ()):
+        found = blocked_cause(child)
+        if found is not None: return found
+    return None
+
+
 def mcp_transport(directory=None):
     try:
         from mcp import ClientSession, StdioServerParameters
@@ -190,6 +198,8 @@ class Transform:
         except Blocked:
             raise
         except Exception as error:
+            blocked = blocked_cause(error)
+            if blocked is not None: raise blocked from error
             private_save(self.directory / 'mcp-error.json', {'type': type(error).__name__, 'detail': str(error)})
             raise Blocked('AWS MCP transport failed; inspect the private mcp-error.json and reconcile uncertain creation') from error
 
@@ -217,7 +227,11 @@ class Transform:
                         require(all(key in arguments for key in schema.get('required', [])), 'Required AWS tool arguments missing: ' + name)
                         require(not set(arguments) - set(schema.get('properties', {})), 'Unrecognized AWS arguments; do not guess')
                         result = await session.call_tool(name, arguments)
-                        require(not getattr(result, 'is_error', getattr(result, 'isError', False)), 'AWS tool returned an error; inspect private receipts')
+                        if getattr(result, 'is_error', getattr(result, 'isError', False)):
+                            private_save(self.directory / 'mcp-tool-error.json', {'tool':name, 'text':'\n'.join(block.text for block in result.content if getattr(block,'type','')=='text')})
+                            error = Blocked('AWS tool rejected the operation; no successful receipt was accepted.')
+                            error.hint = 'Inspect the private mcp-tool-error.json diagnostic. Reconcile any uncertain resource creation before retrying.'
+                            raise error
                         value = getattr(result, 'structured_content', None) or getattr(result, 'structuredContent', None)
                         if not value:
                             text = '\n'.join(block.text for block in result.content if getattr(block, 'type', '') == 'text')
