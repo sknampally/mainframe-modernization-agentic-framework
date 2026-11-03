@@ -94,6 +94,13 @@ each message before sending and retains its receipt. Resume uses the same job;
 uncertain sends require reconciliation. Plan selection never approves generated
 deliverables, and unknown onboarding prompts are not automatically answered.
 
+For newly authorized uploads, the recognized kickoff source-location task is
+filled with the recorded ZIP URI after its task identity, response schema and
+archive checksum are checked. This changes no optional chat/features and approves
+no generated findings. Source submissions retain intent and receipts; uncertain
+outcomes require reconciliation. Non-blocking collaborator invitations remain
+untouched and do not prevent polling. Other blocking tasks require human input.
+
 For the experiment, use `modernize assess` twice after the first completes, then
 `modernize compare --left run-1 --right run-2`. Optional `--label` still selects names.
 `--workspace /private/path` overrides the active selection. A private pointer is stored

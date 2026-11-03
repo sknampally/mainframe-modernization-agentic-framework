@@ -392,6 +392,68 @@ def bootstrap_assessment_plan(run, directory, client, identity, snapshot):
     return True
 
 
+def configure_source_task(run, directory, client, identity, tasks):
+    """Submit only the recorded upload to the known kickoff location form.
+
+    Starting a new assessment authorizes source configuration, not approvals of
+    scope changes or generated deliverables. All other task types remain human.
+    """
+    candidates = [task for task in tasks if isinstance(task, dict)
+                  and task.get('uxComponentId') == 'SpecifyAssetsLocation'
+                  and task.get('status') == 'AWAITING_HUMAN_INPUT']
+    if not candidates or not run['settings'].get('allow_new_assessments'):
+        return False
+    require(len(candidates) == 1, 'Multiple source-location tasks; inspect privately rather than guessing')
+    task_id = candidates[0].get('taskId')
+    require(task_id, 'Source-location task has no identity')
+    source = run.get('uploaded_source', {})
+    require(source.get('uri', '').startswith('s3://') and source.get('sha256'),
+            'Source configuration requires a recorded upload URI and checksum')
+    archive = directory / 'source.zip'
+    require(archive.is_file() and sha(archive) == source['sha256'], 'Recorded source archive changed or is missing')
+    state = run.setdefault('source_task', {})
+    if state.get('task_id') == task_id and state.get('receipt'):
+        run.update(status='WAITING_FOR_ASSESSMENT', reason='Source submission is receipted; waiting for AWS task status to catch up.')
+        return True
+    if state.get('pending'):
+        receipt = directory / 'source-location-submit-receipt.json'
+        if state.get('task_id') == task_id and receipt.is_file():
+            state.update(pending=False, receipt=receipt.name)
+            run.update(status='WAITING_FOR_ASSESSMENT', reason='Recovered successful source submission; waiting for AWS task status to catch up.')
+            private_save(directory / 'run.json', run)
+            return True
+        run.update(status='NEEDS_RECONCILIATION', reason='Source-location submission outcome uncertain; reconcile the existing task before retrying.')
+        return True
+    require(not state.get('task_id') or state['task_id'] == task_id,
+            'A different source-location task appeared; inspect before changing an existing assessment')
+    record = client.calls([('load_instructions', identity),
+                           ('get_resource', {**identity, 'resource': 'task', 'taskId': task_id})])[-1]
+    private_save(directory / 'source-location-task.json', record)
+    task = record.get('task', {})
+    schema = task.get('_outputSchema', {})
+    metadata = task.get('jobMetadata', {})
+    require(task.get('taskId') == task_id and task.get('uxComponentId') == 'SpecifyAssetsLocation'
+            and task.get('status') == 'AWAITING_HUMAN_INPUT'
+            and task.get('category') == 'REGULAR' and task.get('taskType') == 'NORMAL'
+            and all(metadata.get(key) == value for key, value in identity.items()),
+            'Source task identity/type/status changed; no response submitted')
+    require(schema.get('type') == 'object' and schema.get('required') == ['assetLocation']
+            and schema.get('properties', {}).get('assetLocation', {}).get('type') == 'string',
+            'Source-location schema changed; no response submitted')
+    content = {'assetLocation': source['uri']}
+    private_save(directory / 'source-location-submit-intent.json', {'task_id': task_id, 'content': content})
+    state.update(task_id=task_id, pending=True)
+    private_save(directory / 'run.json', run)
+    response = client.calls([('load_instructions', identity), ('complete_task', {
+        **identity, 'taskId': task_id, 'content': json.dumps(content), 'action': 'APPROVE'})])[-1]
+    receipt = directory / 'source-location-submit-receipt.json'
+    private_save(receipt, response)
+    state.update(pending=False, receipt=receipt.name)
+    run.update(status='WAITING_FOR_ASSESSMENT', reason='Recorded source ZIP supplied to kickoff; resume checks the same job.')
+    private_save(directory / 'run.json', run)
+    return True
+
+
 def assessment_step(run, directory, client=None):
     if run['assessment_ready']:
         return
@@ -469,8 +531,11 @@ def assessment_step(run, directory, client=None):
     run['events'].append({'at': time.time(), 'event': 'assessment_status', 'status': status})
     task_container = snapshot.get('tasks', {})
     tasks = task_container.get('hitlTasks', []) if isinstance(task_container, dict) else task_container if isinstance(task_container, list) else []
-    pending = any(isinstance(task, dict) and task.get('status') in {'AWAITING_HUMAN_INPUT','PENDING_HUMAN_INPUT','AWAITING_APPROVAL'} for task in tasks)
-    if pending or snapshot.get('_pollingGuidance', {}).get('hasPendingTasks') is True:
+    if configure_source_task(run, directory, client, identity, tasks):
+        return
+    pending = any(isinstance(task, dict) and task.get('blockingType') != 'NON_BLOCKING'
+                  and task.get('status') in {'AWAITING_HUMAN_INPUT','PENDING_HUMAN_INPUT','AWAITING_APPROVAL'} for task in tasks)
+    if pending or (not tasks and snapshot.get('_pollingGuidance', {}).get('hasPendingTasks') is True):
         run['status'] = 'WAITING_FOR_HUMAN'
         run['reason'] = 'AWS has a pending human task even though the overall job may still be executing. Complete the authorized task, then resume.'
     elif status in {'COMPLETED', 'SUCCEEDED'}:

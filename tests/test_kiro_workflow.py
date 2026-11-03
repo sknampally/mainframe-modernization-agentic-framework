@@ -251,6 +251,65 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(run['plan_bootstrap']['attempts'],2)
         self.assertEqual(run['status'],'WAITING_FOR_HUMAN')
 
+    def source_location_fixture(self):
+        run=self.prepare_job();run['settings']['allow_new_assessments']=True
+        archive=self.directory/'source.zip';archive.write_bytes(b'synthetic archive')
+        run['uploaded_source']={'uri':'s3://fixture-bucket/source.zip','sha256':flow.sha(archive)}
+        identity={'workspaceId':'fixture-workspace','jobId':'fixture-job'}
+        task={'taskId':'fixture-task','uxComponentId':'SpecifyAssetsLocation','status':'AWAITING_HUMAN_INPUT',
+              'category':'REGULAR','taskType':'NORMAL','jobMetadata':identity,
+              '_outputSchema':{'type':'object','required':['assetLocation'],
+                               'properties':{'assetLocation':{'type':'string'}}}}
+        return run,identity,task
+
+    def test_source_task_submits_recorded_zip_once_without_other_options(self):
+        run,identity,task=self.source_location_fixture();calls=[]
+        class Client:
+            def calls(self, requests):
+                calls.extend(requests)
+                return [{}, {'task':task} if requests[-1][0]=='get_resource' else {'status':'SUBMITTED'}]
+        for _ in range(2):
+            self.assertTrue(flow.configure_source_task(run,self.directory,Client(),identity,[task]))
+        submits=[args for name,args in calls if name=='complete_task']
+        self.assertEqual(len(submits),1)
+        self.assertEqual(json.loads(submits[0]['content']),{'assetLocation':'s3://fixture-bucket/source.zip'})
+        self.assertTrue((self.directory/'source-location-submit-receipt.json').exists())
+
+    def test_source_task_changed_schema_or_archive_is_not_submitted(self):
+        run,identity,task=self.source_location_fixture()
+        task['_outputSchema']['required'].append('newDecision')
+        class Client:
+            def calls(self, requests):
+                assert requests[-1][0]=='get_resource'
+                return [{},{'task':task}]
+        with self.assertRaisesRegex(flow.Blocked,'schema changed'):
+            flow.configure_source_task(run,self.directory,Client(),identity,[task])
+        (self.directory/'source.zip').write_bytes(b'changed')
+        with self.assertRaisesRegex(flow.Blocked,'archive changed'):
+            flow.configure_source_task(run,self.directory,Client(),identity,[task])
+
+    def test_uncertain_source_submission_is_not_repeated(self):
+        run,identity,task=self.source_location_fixture()
+        class Client:
+            def calls(self, requests):
+                if requests[-1][0]=='complete_task':raise flow.Blocked('Lost response')
+                return [{},{'task':task}]
+        with self.assertRaises(flow.Blocked):
+            flow.configure_source_task(run,self.directory,Client(),identity,[task])
+        run=self.load()
+        self.assertTrue(flow.configure_source_task(run,self.directory,Client(),identity,[task]))
+        self.assertEqual(run['status'],'NEEDS_RECONCILIATION')
+
+    def test_nonblocking_collaborator_task_does_not_stop_assessment(self):
+        self.prepare_job()
+        class Client:
+            def calls(self, requests):
+                return [{},{'job':{'jobId':'fixture-job','status':'EXECUTING'},
+                            'tasks':{'hitlTasks':[{'uxComponentId':'InviteCollaboratorsContent',
+                              'status':'AWAITING_HUMAN_INPUT','blockingType':'NON_BLOCKING'}]},
+                            '_pollingGuidance':{'hasPendingTasks':True}}]
+        self.assertEqual(flow.drive(self.directory,transform=Client())['status'],'WAITING_FOR_ASSESSMENT')
+
     def test_aws_job_wait_and_resume_reuses_job(self):
         self.prepare_job()
         class Client:
