@@ -46,6 +46,19 @@ def command_ok(command):
         return False
 
 
+def installation_hint(tool):
+    urls = {
+        'git': 'https://git-scm.com/downloads',
+        'aws': 'https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html',
+        'uv': 'https://docs.astral.sh/uv/getting-started/installation/',
+        'uvx': 'https://docs.astral.sh/uv/getting-started/installation/',
+        'claude': 'https://code.claude.com/docs/en/setup',
+        'codex': 'https://learn.chatgpt.com/docs/codex/cli',
+        'kiro-cli': 'https://kiro.dev/docs/cli/',
+    }
+    return tool + ': ' + urls.get(tool, 'Install your configured launcher through its approved vendor distribution')
+
+
 def checks(project):
     """No model calls; authentication diagnostics are not printed or saved."""
     tools = ['git', 'aws', 'claude', 'codex' if project['providers']['wireframes'] == 'codex' else 'claude']
@@ -53,13 +66,14 @@ def checks(project):
     if project['providers']['executor'] == 'kiro': tools.append('kiro-cli')
     elif project['providers']['executor'] == 'codex': tools.append('codex')
     missing = sorted({tool for tool in tools if not shutil.which(tool)})
-    require(not missing, 'Install missing tools, reopen your terminal, then rerun modernize init: ' + ', '.join(missing))
-    require(command_ok(['claude', 'auth', 'status']), 'Run claude auth login, then rerun modernize init')
+    require(not missing, 'Install missing tools, reopen your terminal, then rerun modernize init: ' + ', '.join(missing) + '\n' + '\n'.join(installation_hint(tool) for tool in missing) +
+            '\nFull workstation guide: docs/engineer-setup.md in the framework checkout')
+    require(command_ok(['claude', 'auth', 'status']), 'Run claude auth login, then rerun modernize init. See docs/engineer-setup.md for installation and authentication.')
     aws = ['aws']
     if project['aws'].get('profile'): aws += ['--profile', project['aws']['profile']]
     if project['aws'].get('region'): aws += ['--region', project['aws']['region']]
     require(command_ok(aws + ['sts', 'get-caller-identity']),
-            'AWS login unavailable. Authenticate the saved profile (for SSO: aws sso login --profile <profile>), then rerun modernize init')
+            'AWS login unavailable. Configure a new SSO profile with aws configure sso --profile <profile>, or sign in to the saved profile with aws sso login --profile <profile>. Then rerun modernize init. See docs/engineer-setup.md.')
     if project['providers']['executor'] == 'kiro':
         import os
         require(os.environ.get('KIRO_API_KEY'), 'Configure Kiro headless authentication, then rerun modernize init')
@@ -72,6 +86,7 @@ def guided_init(args):
     import modernize as app
     require(sys.stdin.isatty(), 'Interactive setup needs a terminal; supply --workspace, --source and --scope for scripted init')
     print('Modernization setup — source, environment, AWS assessment access and model roles.')
+    print('Workstation installation and login instructions: ' + str(app.FRAMEWORK / 'docs/engineer-setup.md'))
     default = args.workspace
     if not default and active_file().exists(): default = str(workspace())
     work = Path(ask('Private workspace directory', default or str(Path.home() / 'modernization-poc' / 'carddemo'))).expanduser().resolve()
