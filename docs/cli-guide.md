@@ -10,6 +10,75 @@ four-phase acceptance path. Full live AWS/Kiro/Claude Code/Codex workflow accept
 Python 3.10+ on macOS/Linux is required; Windows is not supported by the current
 file-lock/process-group implementation. Run from a clean committed framework checkout.
 
+## Start here: guided CLI
+
+Install once from a clean checkout with Python 3.10+ and uv available:
+
+```bash
+uv tool install --editable .
+modernize init
+```
+
+If the command is not found, ensure uv's tool executable directory is on PATH
+(`uv tool update-shell` can guide that setup), then reopen the terminal. The editable
+installation is required in this POC: the CLI loads versioned prompts and source
+contracts from its Git checkout. Keep that checkout available and unchanged during
+an active run. This is not yet a standalone distributable wheel.
+
+`init` guides you through the private workspace, local Git checkout or GitHub URL,
+source revision, business scope, AWS profile/region/bucket, executor runtime and HTML
+provider. It saves choices outside Git and checks required executables, Claude login,
+AWS credentials and selected runtime authentication. Missing tools/logins produce
+instructions; it does not install software or collect credentials. Kiro is checked
+only when selected. Codex login is checked when selected. The default pair remains
+Claude Sonnet executor and Claude Opus reviewer.
+
+The guide then offers existing or new AWS resources and an optional private Transform
+connection configuration file. It asks for confirmation before creating resources.
+It presents the connector activation link, requires the operator's confirmation,
+and suggests `modernize assess` only when setup is ready. Administrator activation
+and Transform application authentication remain real boundaries. No assessment job
+starts during `init`. Rerun `modernize init` to continue incomplete setup without
+recloning source or deleting evidence.
+
+Normal commands now reuse the saved active workspace:
+
+```bash
+modernize assess --source <same-github-url-or-local-path>
+modernize status
+modernize resume
+modernize approve assessment
+modernize validate --reviewer claude-code
+modernize approve validation
+modernize review-site --provider codex
+modernize approve specifications
+modernize package
+```
+
+The `--source` on assess is optional and must match the pinned setup; a different
+source requires a new workspace. Each unlabelled assess chooses run-1, run-2, etc.;
+resume selects the active run and never invents one. If a validation or HTML-generation call was interrupted, resume routes back to that saved phase instead of calling AWS. New AWS runs prompt for explicit
+source-upload/job authorization. Approvals prompt for owner, rationale and source
+provenance confirmation; they are never inferred. Validation approval after SME
+questions remains an explicit gate before HTML generation.
+
+For the experiment, use `modernize assess` twice after the first completes, then
+`modernize compare --left run-1 --right run-2`. Optional `--label` still selects names.
+`--workspace /private/path` overrides the active selection. A private pointer is stored
+at `~/.config/mainframe-modernize/active.json`; project settings remain in the chosen
+workspace. The CLI outputs the next recommended step, while missing access or evidence
+stops progression.
+
+For unattended use, supply the explicit flags below: new assessments require
+`--allow-new-assessment`; approvals require `--by`, `--note` and, for assessment,
+`--confirm-source-match`. There is no default approval in noninteractive mode.
+
+## Advanced and scripted usage
+
+The examples below expose the underlying settings and phase commands for diagnostics
+and automation. Installed `modernize` already includes the MCP dependency; repeating
+`uv run --with ...` is unnecessary for normal use.
+
 ## Four phases
 
 ```mermaid

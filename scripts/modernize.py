@@ -598,12 +598,13 @@ def semantic_compare(work, project, args, runtime=model_call):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--workspace', required=True, help='Private workspace outside the framework and source checkout')
+    p.add_argument('--workspace', help='Private workspace outside the framework and source checkout')
     commands = p.add_subparsers(dest='command', required=True)
     init = commands.add_parser('init', help='Pin GitHub/local source and save private settings')
-    init.add_argument('--source', required=True)
+    init.add_argument('--source')
+    init.add_argument('--guided', action='store_true', help='Run or resume the interactive setup guide')
     init.add_argument('--ref')
-    init.add_argument('--scope', required=True)
+    init.add_argument('--scope')
     init.add_argument('--settings')
     init.add_argument('--aws-profile')
     init.add_argument('--region')
@@ -617,7 +618,8 @@ def parser():
     s.add_argument('--create-bucket', action='store_true')
     for command in ('assess', 'resume'):
         a = commands.add_parser(command)
-        a.add_argument('--label', required=True)
+        a.add_argument('--label')
+        if command == 'assess': a.add_argument('--source')
         a.add_argument('--findings')
         a.add_argument('--allow-new-assessment', action='store_true')
         a.add_argument('--wait', action='store_true')
@@ -627,10 +629,11 @@ def parser():
     a = commands.add_parser('approve')
     a.add_argument('phase', choices=['assessment', 'validation', 'specifications'])
     a.add_argument('--label')
-    a.add_argument('--by', required=True)
-    a.add_argument('--note', required=True)
+    a.add_argument('--by')
+    a.add_argument('--note')
     a.add_argument('--confirm-source-match', action='store_true')
-    commands.add_parser('validate')
+    v = commands.add_parser('validate')
+    v.add_argument('--reviewer', choices=['claude-code'], default='claude-code')
     d = commands.add_parser('decide')
     d.add_argument('--question', required=True)
     d.add_argument('--by', required=True)
@@ -652,9 +655,14 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    work = Path(args.workspace).expanduser().resolve()
+    from modernize_setup import guided_init, workspace, select_workspace, prepare_command, next_step
     project = None
     try:
+        if args.command == 'init' and (args.guided or not args.source or not args.scope or not args.workspace):
+            result = guided_init(args)
+            print(json.dumps(result, indent=2))
+            return 0 if result['status'] not in {'SETUP_INCOMPLETE', 'WAITING_FOR_CONNECTOR_APPROVAL'} else 2
+        work = Path(args.workspace).expanduser().resolve() if args.workspace else workspace()
         if args.command == 'init':
             require(not work.is_relative_to(FRAMEWORK), 'Private workspace must be outside framework checkout')
             work.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -664,15 +672,21 @@ def main(argv=None):
                 except BlockingIOError as error:
                     raise Blocked('Another command is initializing this workspace') from error
                 result = initialize(args, work)
+                select_workspace(work)
         elif args.command == 'status':
             project = read(work / 'project.json')
             result = {'status': project['stage'], 'source_commit': project['source']['commit'],
                       'assessments': {k: read(Path(v['directory']) / 'run.json')['status'] for k, v in project['assessments'].items()},
-                      'approvals': list(project['approvals']), 'package': project.get('package')}
+                      'approvals': list(project['approvals']), 'package': project.get('package'), 'next_step': next_step(project)}
         elif getattr(args, 'detach', False):
             require((work / 'project.json').is_file(), 'Initialize first')
+            with locked(work) as project:
+                prepare_command(args, work, project)
             values = list(argv if argv is not None else sys.argv[1:])
+            if '--label' not in values: values += ['--label', args.label]
+            if args.allow_new_assessment and '--allow-new-assessment' not in values: values.append('--allow-new-assessment')
             values.remove('--detach')
+            if not args.workspace: values = ['--workspace', str(work), *values]
             if '--wait' not in values:
                 values.append('--wait')
             with (work / 'controller.log').open('a') as log:
@@ -681,12 +695,22 @@ def main(argv=None):
             result = {'status': 'LOCAL_WATCHER_STARTED', 'pid': process.pid, 'log': str(work / 'controller.log')}
         else:
             with locked(work) as project:
+                prepare_command(args, work, project)
                 # Make the reused assessment adapter use the same saved AWS profile/region.
                 for key, variable in (('profile', 'AWS_PROFILE'), ('region', 'AWS_DEFAULT_REGION')):
                     if project['aws'].get(key):
                         os.environ[variable] = project['aws'][key]
                 try:
-                    if args.command == 'setup': result = setup(work, project, args)
+                    pending = project.get('pending_action') if args.command == 'resume' else None
+                    if args.command in {'validate', 'review-site'}:
+                        project['pending_action'] = {'command': args.command, 'provider': getattr(args, 'provider', None)}
+                        persist(work, project)
+                    if pending:
+                        if pending['command'] == 'validate': result = pipeline(work, project, args)
+                        else: result = review_site(work, project, SimpleNamespace(provider=pending.get('provider')))
+                        project.pop('pending_action', None)
+                        persist(work, project)
+                    elif args.command == 'setup': result = setup(work, project, args)
                     elif args.command in {'assess', 'resume'}: result = assessment(work, project, args)
                     elif args.command == 'approve': result = approve(work, project, args)
                     elif args.command == 'validate': result = pipeline(work, project, args)
@@ -697,6 +721,9 @@ def main(argv=None):
                     elif args.command == 'compare':
                         result = compare(work, project, args)
                         if args.semantic: result = semantic_compare(work, project, args)
+                    if args.command in {'validate', 'review-site'}:
+                        project.pop('pending_action', None)
+                        persist(work, project)
                 except kw.RuntimeUnavailable:
                     project['stage'] = 'WAITING_FOR_RUNTIME'
                     persist(work, project)
@@ -705,9 +732,11 @@ def main(argv=None):
                     # Preserve consumed call counts and remote mutation markers on every failure.
                     persist(work, project)
                     raise
+        if project is not None and 'next_step' not in result:
+            result['next_step'] = next_step(project)
         print(json.dumps(result, indent=2))
         return 2 if result.get('status') in {'BLOCKED', 'REWORK_LIMIT', 'ASSESSMENT_FAILED', 'NEEDS_RECONCILIATION'} else 0
-    except (Blocked, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+    except (Blocked, OSError, ValueError, KeyError, EOFError, subprocess.SubprocessError) as error:
         print(json.dumps({'status': 'BLOCKED', 'reason': str(error)}))
         return 2
 

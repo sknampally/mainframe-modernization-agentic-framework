@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mainframe-modernize-poc"
+version = "0.2.0"
+description = "Evidence-driven modernization preparation CLI"
+requires-python = ">=3.10"
+dependencies = ["mcp>=2,<3"]
+
+[project.scripts]
+modernize = "modernize:main"
+
+[tool.setuptools]
+py-modules = ["modernize", "modernize_setup", "modernize_models", "modernize_artifacts", "kiro_workflow", "pilot"]
+package-dir = {"" = "scripts"}

@@ -22,3 +22,9 @@ __pycache__/
 /evidence/
 /local-pilots/
 /runs/
+
+# Local editable CLI installation metadata.
+*.egg-info/
+build/
+dist/
+.venv/
