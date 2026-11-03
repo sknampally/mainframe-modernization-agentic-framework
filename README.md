@@ -14,10 +14,15 @@ Git checkout, configure your own AWS/provider access, and use the built-in proto
 No custom prompt writing or manual agent handoffs are required for normal operation.
 
 ```bash
-./modernize --help
-./modernize --workspace /path/to/private-poc init \
-  --source /path/to/mainframe-checkout --scope "One bounded business journey"
+uv tool install --editable .
+modernize init
 ```
+
+The setup guide saves source/environment choices privately, checks tools and logins,
+offers AWS resource setup, and suggests the next command. Later commands reuse the
+active workspace: `modernize assess`, `modernize status`, `modernize resume`.
+Explicit approvals remain required; rerun `modernize init` to continue incomplete setup.
+
 
 ## Why this framework exists
 
@@ -97,7 +102,8 @@ The current foundation contains the following files. The tree includes documenta
 ```text
 mainframe-modernization-agentic-framework/
 ├── README.md
-├── modernize                         # Four-phase CLI entry point
+├── modernize                         # Repository-local entry point
+├── pyproject.toml                    # Installable modernize command
 ├── LICENSE
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -150,6 +156,7 @@ mainframe-modernization-agentic-framework/
 ├── scripts/
 │   ├── pilot.py
 │   ├── kiro_workflow.py
+│   ├── modernize_setup.py
 │   ├── modernize.py
 │   ├── modernize_models.py
 │   └── modernize_artifacts.py
@@ -157,6 +164,7 @@ mainframe-modernization-agentic-framework/
 │   ├── test_pilot.py
 │   ├── test_kiro_workflow.py
 │   ├── test_mcp_transport.py
+│   ├── test_guided_cli.py
 │   ├── test_modernize.py
 │   └── fixtures/
 │       └── mcp_server.py
