@@ -11,13 +11,17 @@ agent-provider acceptance is pending.** No application buildout, deployment, dat
 migration or runtime equivalence is claimed. AI assistance is used to develop this
 framework and to prepare candidate artifacts; humans retain approval authority.
 
+**Mac or Windows? Start with the [platform installation and update guide](docs/platform-install.md).**
+Windows currently uses Ubuntu/WSL2; native PowerShell runtime is not supported.
+The final `.` in the install command is required.
+
 **New workstation? Follow the [engineer installation and login guide](docs/engineer-setup.md) first.**
 Then use the [CLI guide](docs/cli-guide.md). Supply a GitHub URL or clean local
 Git checkout, configure your own AWS/provider access, and use the built-in protocols.
 No custom prompt writing or manual agent handoffs are required for normal operation.
 
 ```bash
-uv tool install --editable .
+uv tool install --force --python 3.12 --editable .
 modernize
 ```
 
@@ -185,6 +189,7 @@ mainframe-modernization-agentic-framework/
     │   ├── terminal-preview.svg
     │   ├── poc-workflow.svg
     │   └── reference-architecture.svg
+    ├── platform-install.md
     ├── terminal-console.md
     ├── engineer-setup.md
     ├── cli-guide.md

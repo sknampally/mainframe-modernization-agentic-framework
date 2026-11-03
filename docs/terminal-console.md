@@ -1,5 +1,8 @@
 # Reframe terminal console
 
+For first installation, updates and troubleshooting on Mac or Windows/WSL2, follow
+[the platform installation guide](platform-install.md). Every install command includes the required trailing dot.
+
 **Reframe** is the product name; `modernize` remains the executable and scriptable
 command. The current POC prepares mainframe modernization specifications and a
 reviewed implementation package. It does not implement or deploy an application.
