@@ -46,13 +46,21 @@ instructions; it does not install software or collect credentials. Kiro is check
 only when selected. Codex login is checked when selected. The default pair remains
 Claude Sonnet executor and Claude Opus reviewer.
 
-The guide then offers existing or new AWS resources and an optional private Transform
-connection configuration file. It asks for confirmation before creating resources.
+The guide first checks the Transform application connection. A valid connection is
+reused. Otherwise it offers browser SSO, using the Identity Center start URL and
+region from the saved AWS profile when available. The Transform application profile
+name is separate from the AWS CLI profile. Connection is rechecked before resource
+questions appear. No MCP client JSON or manual configuration file is needed for
+normal setup. An advanced file option accepts only a path to authentication arguments,
+never an `mcpServers` client configuration. The guide then offers existing or new AWS resources. It asks for confirmation before creating resources.
 It presents the connector activation link, requires the operator's confirmation,
 and suggests `modernize assess` only when setup is ready. Administrator activation
 and Transform application authentication remain real boundaries. No assessment job
 starts during `init`. Rerun `modernize init` to continue incomplete setup without
-recloning source or deleting evidence.
+recloning source or deleting evidence. If the framework was updated before any
+assessment/approval exists, setup can explicitly confirm a new framework baseline
+while keeping the pinned source unchanged. Existing assessment baselines are never
+repinned.
 
 Normal commands now reuse the saved active workspace:
 

@@ -79,6 +79,13 @@ class TerminalTests(unittest.TestCase):
             self.assertEqual(ui.run(initial='init'),0)
         self.assertIn('Setup cancelled',self.output.getvalue())
 
+    def test_multiline_paste_is_one_rejected_input(self):
+        ui=self.ui()
+        with patch('modernize_terminal.PromptSession') as session:
+            session.return_value.prompt.return_value='{\n"mcpServers":{}\n}'
+            with self.assertRaisesRegex(Blocked,'single value'):ui.ask('Workspace ID')
+        session.return_value.prompt.assert_called_once()
+
     def test_reporter_avoids_json_dump(self):
         import modernize
         results=[]
