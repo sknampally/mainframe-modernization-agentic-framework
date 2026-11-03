@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from pilot import require
+from pilot import Blocked, require
 
 
 def active_file():
@@ -59,6 +59,37 @@ def installation_hint(tool):
     return tool + ': ' + urls.get(tool, 'Install your configured launcher through its approved vendor distribution')
 
 
+def ensure_aws_login(project):
+    """Check credentials, optionally complete SSO, then prove access with STS."""
+    require(shutil.which('aws'), 'Install AWS CLI v2 before continuing: ' + installation_hint('aws'))
+    profile = project['aws'].get('profile') or 'default'
+    aws = ['aws', '--profile', profile, '--no-cli-pager']
+    if project['aws'].get('region'): aws += ['--region', project['aws']['region']]
+    verify = aws + ['--cli-connect-timeout', '5', '--cli-read-timeout', '10', 'sts', 'get-caller-identity']
+    print('Checking AWS access for the selected profile...')
+    if command_ok(verify):
+        print('AWS profile access verified.')
+        return
+    require(sys.stdin.isatty(), 'AWS authentication is required. Sign in to the saved profile, then rerun modernize init.')
+    configured_sso = any(command_ok(aws + ['configure', 'get', key]) for key in ('sso_session', 'sso_start_url'))
+    if not configured_sso:
+        print('This profile has no detected SSO configuration. Existing non-SSO profiles may need their approved credential refresh process.')
+        require(yes('Configure this profile for IAM Identity Center (AWS SSO)?'),
+                'AWS profile needs authentication. Use your approved login process, then rerun modernize init.')
+        result = subprocess.run(aws + ['configure', 'sso'], timeout=600)
+        require(result.returncode == 0, 'AWS SSO profile configuration did not finish. Rerun modernize init to retry.')
+    print('AWS will handle authentication in its own browser/terminal flow; Reframe does not collect credentials.')
+    require(yes('Open AWS SSO login for the selected profile now?', default=True),
+            'AWS login deferred. Rerun modernize init when ready.')
+    try:
+        result = subprocess.run(aws + ['sso', 'login'], timeout=600)
+    except subprocess.TimeoutExpired as error:
+        raise Blocked('AWS login timed out. Rerun modernize init to retry.') from error
+    require(result.returncode == 0, 'AWS SSO login did not finish successfully. Rerun modernize init to retry.')
+    require(command_ok(verify), 'AWS login returned, but profile access is still unverified. Check account/role access before continuing.')
+    print('AWS profile access verified after sign-in.')
+
+
 def checks(project):
     """No model calls; authentication diagnostics are not printed or saved."""
     tools = ['git', 'aws', 'claude', 'codex' if project['providers']['wireframes'] == 'codex' else 'claude']
@@ -69,11 +100,7 @@ def checks(project):
     require(not missing, 'Install missing tools, reopen your terminal, then rerun modernize init: ' + ', '.join(missing) + '\n' + '\n'.join(installation_hint(tool) for tool in missing) +
             '\nFull workstation guide: docs/engineer-setup.md in the framework checkout')
     require(command_ok(['claude', 'auth', 'status']), 'Run claude auth login, then rerun modernize init. See docs/engineer-setup.md for installation and authentication.')
-    aws = ['aws']
-    if project['aws'].get('profile'): aws += ['--profile', project['aws']['profile']]
-    if project['aws'].get('region'): aws += ['--region', project['aws']['region']]
-    require(command_ok(aws + ['sts', 'get-caller-identity']),
-            'AWS login unavailable. Configure a new SSO profile with aws configure sso --profile <profile>, or sign in to the saved profile with aws sso login --profile <profile>. Then rerun modernize init. See docs/engineer-setup.md.')
+    ensure_aws_login(project)
     if project['providers']['executor'] == 'kiro':
         import os
         require(os.environ.get('KIRO_API_KEY'), 'Configure Kiro headless authentication, then rerun modernize init')
@@ -101,9 +128,10 @@ def guided_init(args):
             value = input('Git commit/ref to pin (Enter uses current default branch): ').strip()
             args.ref = args.ref or value or None
         args.scope = args.scope or ask('Business journey / assessment scope', 'CardDemo sign-on journey; exclude other application journeys')
-        print('Use an existing AWS profile. If needed, configure it separately with aws configure sso.')
+        print('Choose an AWS profile. Setup can guide SSO configuration/login when access needs refreshing.')
         args.aws_profile = args.aws_profile or ask('AWS profile', 'default')
         args.region = args.region or ask('AWS region', 'us-east-1')
+        ensure_aws_login({'aws': {'profile': args.aws_profile, 'region': args.region}})
         args.bucket = args.bucket or ask('Private S3 bucket name')
         args.executor = ask('Executor runtime: claude, kiro or codex', args.executor)
         require(args.executor in {'claude', 'kiro', 'codex'}, 'Unsupported executor runtime')
