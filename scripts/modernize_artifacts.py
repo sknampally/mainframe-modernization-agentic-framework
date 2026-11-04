@@ -92,11 +92,15 @@ def render_site(spec, screens, decisions, title='Modernization review'):
     """Never execute model-generated HTML, JavaScript, URLs or styles."""
     esc = lambda x: html.escape(str(x), quote=True)
     blocks = []
+    if screens['screens']:
+        blocks.append('<nav aria-label="Prototype screens"><h2>Application walkthrough</h2><ul>' +
+                      ''.join('<li><a href="#screen-' + str(index) + '">' + esc(screen['title']) + '</a></li>'
+                              for index, screen in enumerate(screens['screens'])) + '</ul></nav>')
     blocks.append('<h2>Scope</h2><p>' + esc(spec['scope']) + '</p><h3>Excluded</h3><p>' + esc(spec['excluded_scope']) + '</p>')
-    for screen in screens['screens']:
+    for index, screen in enumerate(screens['screens']):
         fields = ''.join('<label>' + esc(f) + '<input disabled placeholder="Illustrative only"></label>' for f in screen['fields'])
         actions = ''.join('<button disabled>' + esc(a) + '</button>' for a in screen['actions'])
-        blocks.append('<article><h2>' + esc(screen['title']) + '</h2><p>' + esc(screen['purpose']) + '</p>' + fields + actions +
+        blocks.append('<article id="screen-' + str(index) + '"><h2>' + esc(screen['title']) + '</h2><p>' + esc(screen['purpose']) + '</p>' + fields + actions +
                       '<p>Rules: ' + esc(', '.join(screen['rule_ids'])) + '</p><h3>States</h3><p>' + esc('; '.join(screen['states'])) +
                       '</p><h3>Uncertainties</h3><p>' + esc(screen['uncertainties']) + '</p></article>')
     blocks.append('<h2>Business rules</h2>')

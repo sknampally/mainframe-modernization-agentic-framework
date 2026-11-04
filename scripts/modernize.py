@@ -409,6 +409,15 @@ def preparation_report(work, project):
     return str(report)
 
 
+def verified_preparation_report(work, project):
+    record = project.get('preparation_report')
+    require(record and (work / record['path']).is_file(), 'Generate the SME/architect report before approval')
+    require(sha(work / record['path']) == record['sha256'], 'Preparation report changed after generation')
+    require(record['specification'] == project['specification']['sha256']
+            and record['decisions'] == digest(project['decisions']), 'Preparation report is stale')
+    return record['sha256']
+
+
 def approve(work, project, args):
     verify_source(project)
     require(args.by.strip() and args.note.strip(), 'Named human owner and approval rationale required')
@@ -426,6 +435,7 @@ def approve(work, project, args):
         spec = read(spec_path(work, project))
         unresolved = [q['id'] for q in spec['questions'] if q['id'] not in project['decisions']]
         require(not unresolved, 'Record SME decisions first: ' + ', '.join(unresolved))
+        verified_preparation_report(work, project)
         fingerprint = digest({'specification': project['specification']['sha256'], 'decisions': project['decisions']})
         project['stage'] = 'VALIDATION_APPROVED'
     else:
@@ -434,6 +444,8 @@ def approve(work, project, args):
         approved(project, 'validation', digest({'specification': project['specification']['sha256'], 'decisions': project['decisions']}))
         project['stage'] = 'SPECIFICATIONS_APPROVED'
     project['approvals'][args.phase] = {'sha256': fingerprint, 'by': args.by, 'note': args.note, 'at': time.time()}
+    if args.phase == 'validation':
+        project['approvals'][args.phase]['report_sha256'] = project['preparation_report']['sha256']
     persist(work, project)
     return {'status': project['stage'], 'approved_sha256': fingerprint}
 
@@ -554,6 +566,8 @@ def review_site(work, project, args, runtime=model_call):
     verify_source(project)
     spec = read(spec_path(work, project))
     approved(project, 'validation', digest({'specification': project['specification']['sha256'], 'decisions': project['decisions']}))
+    require(project['approvals']['validation'].get('report_sha256') == verified_preparation_report(work, project),
+            'SME/architect approval does not match the preparation report')
     if project.get('site'):
         site_fingerprint(work, project)
         return {'status': project['stage'], 'html': str(work / project['site']['directory'] / 'index.html')}
@@ -606,6 +620,8 @@ def package(work, project):
     spec = read(spec_path(work, project))
     approved(project, 'validation', digest({'specification': project['specification']['sha256'], 'decisions': project['decisions']}))
     approved(project, 'specifications', site_fingerprint(work, project))
+    require(project['approvals']['validation'].get('report_sha256') == verified_preparation_report(work, project),
+            'Preparation report approval changed')
     version = digest(project['approvals'])[:16]
     destination = work / ('package-' + version)
     require(not destination.exists(), 'Package already exists; inspect it or use feedback for a new version')
@@ -642,6 +658,7 @@ def package(work, project):
             'Do not invent missing decisions or claim unexecuted tests passed. Respect deferred work boundaries.\n\n' +
             spec['sections'][section]['implementation_prompt'])
     shutil.copyfile(work / project['site']['directory'] / 'index.html', destination / 'review.html')
+    shutil.copyfile(work / project['preparation_report']['path'], destination / 'sme-architect-review.html')
     write(destination / 'provenance.json', {'source': {k: v for k, v in project['source'].items() if k != 'root'},
         'scope': project['scope'], 'framework_commit': project['framework_commit'],
         'providers': project['providers'],

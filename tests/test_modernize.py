@@ -122,6 +122,19 @@ class PreparationTests(unittest.TestCase):
         self.assertIn('Business rules', content)
         self.assertEqual(report['specification'], self.project['specification']['sha256'])
 
+    def test_preparation_report_tamper_blocks_human_approval(self):
+        self.validated()
+        (self.work / self.project['preparation_report']['path']).write_text('changed')
+        with self.assertRaisesRegex(pilot.Blocked, 'Preparation report changed'):
+            self.approve('validation')
+
+    def test_preparation_report_tamper_after_approval_blocks_business_site(self):
+        self.validated()
+        self.approve('validation')
+        (self.work / self.project['preparation_report']['path']).write_text('changed')
+        with self.assertRaisesRegex(pilot.Blocked, 'Preparation report changed'):
+            app.review_site(self.work, self.project, self.args('review-site'), self.runtime([self.screens()]))
+
     def test_phase_one_stops_and_never_calls_agents(self):
         self.assertEqual(self.assess()['status'], 'AWAITING_ASSESSMENT_APPROVAL')
         with self.assertRaisesRegex(pilot.Blocked, 'Approve Phase 1'):
