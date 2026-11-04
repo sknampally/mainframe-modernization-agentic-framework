@@ -76,6 +76,19 @@ def validate_spec(spec, source):
 def validate_screens(value, spec):
     require(isinstance(value, dict) and isinstance(value.get('screens'), list) and value['screens'], 'Screens required')
     rules = {r['id'] for r in spec['rules']}
+    require(isinstance(value.get('apis'), list), 'Structured API contracts required; use an empty list only when no APIs are proposed')
+    operations = set()
+    for api in value['apis']:
+        require(isinstance(api, dict) and all(text(api.get(key)) for key in
+                ('id','method','path','purpose','authentication','uncertainties')), 'Incomplete API contract')
+        require(api['method'] in {'GET','POST','PUT','PATCH','DELETE'} and api['path'].startswith('/')
+                and not api['path'].startswith('//'), 'API requires a relative route and supported method')
+        key = (api['method'],api['path'])
+        require(key not in operations, 'Duplicate API operation')
+        operations.add(key)
+        require(isinstance(api.get('request'), dict) and isinstance(api.get('responses'), dict)
+                and api['responses'], 'API request and response contracts required')
+        require(strings(api.get('rule_ids')) and set(api['rule_ids']) <= rules, 'Unknown API rule reference')
     ids = set()
     for screen in value['screens']:
         require(isinstance(screen, dict) and all(text(screen.get(k)) for k in ('id', 'title', 'purpose', 'uncertainties')),
@@ -104,6 +117,8 @@ def render_site(spec, screens, decisions, title='Modernization review'):
                       '<p>Rules: ' + esc(', '.join(screen['rule_ids'])) + '</p><h3>States</h3><p>' + esc('; '.join(screen['states'])) +
                       '</p><h3>Uncertainties</h3><p>' + esc(screen['uncertainties']) + '</p></article>')
     blocks.append('<h2>Business rules</h2>')
+    if screens.get('apis'):
+        blocks.append('<h2>Proposed API contracts</h2><pre>' + esc(json.dumps(screens['apis'], indent=2)) + '</pre>')
     for r in spec['rules']:
         blocks.append('<article><h3>' + esc(r['id']) + ' · ' + esc(r['evidence_status']) + '</h3><p>' + esc(r['statement']) +
                       '</p><p>Evidence: ' + esc(r['source_path'] + ' ' + r['source_anchor']) + '</p></article>')

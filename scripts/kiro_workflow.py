@@ -38,8 +38,13 @@ def private_save(path, value):
 
 def source_ok(run):
     root = Path(run['source']['root'])
-    require(git(root, 'rev-parse', 'HEAD') == run['source']['commit'], 'Pinned source commit changed')
-    require(not git(root, 'status', '--porcelain'), 'Source checkout is not clean')
+    if run['source'].get('kind') == 's3-zip':
+        require(git(root, 'write-tree') == run['source']['commit'], 'Pinned source tree changed')
+        require(not git(root, 'diff-files', '--name-only') and not git(root, 'ls-files', '--others'),
+                'S3 source snapshot changed')
+    else:
+        require(git(root, 'rev-parse', 'HEAD') == run['source']['commit'], 'Pinned source commit changed')
+        require(not git(root, 'status', '--porcelain'), 'Source checkout is not clean')
     require(git(root, 'remote', 'get-url', 'origin') == run['source']['repository'], 'Source origin changed')
     require(git(FRAMEWORK, 'rev-parse', 'HEAD') == run['framework_commit'], 'Framework revision changed')
     require(not git(FRAMEWORK, 'status', '--porcelain'), 'Framework checkout is not clean')
@@ -76,14 +81,16 @@ def initialize(args):
     require(source.is_dir() and workspace.is_dir(), 'Source and workspace must exist')
     require(not workspace.is_relative_to(source) and not workspace.is_relative_to(FRAMEWORK),
             'Run workspace must be outside source and framework checkouts')
-    require(not git(source, 'status', '--porcelain'), 'Source checkout is not clean')
+    supplied_source = getattr(args, 'source_record', None)
+    if not supplied_source or supplied_source.get('kind') != 's3-zip':
+        require(not git(source, 'status', '--porcelain'), 'Source checkout is not clean')
     require(not git(FRAMEWORK, 'status', '--porcelain'), 'Framework checkout is not clean')
     config = settings(args.settings)
     identity = 'RUN-' + uuid.uuid4().hex[:16]
     directory = workspace / 'runs' / identity
     directory.mkdir(parents=True, mode=0o700)
     run = {'version': 1, 'run_id': identity, 'framework_commit': git(FRAMEWORK, 'rev-parse', 'HEAD'),
-           'source': {'root': str(source), 'repository': git(source, 'remote', 'get-url', 'origin'),
+           'source': supplied_source or {'root': str(source), 'repository': git(source, 'remote', 'get-url', 'origin'),
                       'commit': git(source, 'rev-parse', 'HEAD')},
            'objective': args.objective, 'assessment_input': args.assessment,
            'settings': config, 'config_sha256': hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
@@ -269,14 +276,14 @@ def export_findings(run, directory, client, identity):
                            ('list_resources', {**identity, 'resource': 'artifacts'})])[-1]
     private_save(directory / 'artifact-listing.json', listing)
     requests = []
-    for item in listing.get('artifacts', []):
+    for item in listing.get('artifacts', listing.get('items', [])):
         if isinstance(item, dict) and item.get('artifactId'):
             requests.append({'resource': 'artifact', 'artifactId': item['artifactId']})
     for item in listing.get('assets', []):
         if isinstance(item, dict) and item.get('assetKey') and listing.get('connectorId'):
             if Path(item['assetKey']).suffix.lower() in TEXT_SUFFIXES:
                 requests.append({'resource': 'asset', 'assetKey': item['assetKey'], 'connectorId': listing['connectorId']})
-    require(len(requests) <= 40, 'More than 40 top-level artifacts; configure a bounded output_location in saved settings')
+    require(len(requests) <= 1000, 'More than 1000 top-level artifacts; configure a bounded output_location in saved settings')
     require(requests, 'No downloadable top-level artifacts returned; configure output_location for nested/S3 exports')
     calls = [('load_instructions', identity)]
     for index, arguments in enumerate(requests):
@@ -370,8 +377,9 @@ def bootstrap_assessment_plan(run, directory, client, identity, snapshot):
         'Use the EXISTING job ' + identity['jobId'] + ' in workspace ' + identity['workspaceId'] +
         '. Do not create or switch jobs. Select option 3, custom ASSESSMENT-ONLY plan. '
         'Confirm these explicit capabilities: Analyze code; Analyze data (where supported inputs exist); '
-        'Generate technical documentation; Extract business logic; Decompose code (boundaries/seeds only); '
-        'Plan test cases (draft only). This capability selection is confirmed: generate the plan and proceed. '
+        'Generate technical documentation; Extract business logic. '
+        'Do not add Decompose code or Plan test cases: proposed boundaries and test specifications belong to the later independently reviewed preparation phase. '
+        'This capability selection is confirmed: generate the plan and proceed. '
         'Use existing active connector ' + connector + ' and source archive ' + source +
         '. Pinned source commit: ' + run['source']['commit'] + '. Scope: ' + run['objective'] +
         '. No application implementation, reimagination, deployment, new infrastructure or additional jobs. '
@@ -506,10 +514,15 @@ def assessment_step(run, directory, client=None):
                                 capture_output=True, text=True, timeout=120)
         require(result.returncode == 0, 'Source upload failed; no assessment job was requested')
         run['uploaded_source'] = {'uri': source_uri, 'sha256': sha(archive)}
+        if config.get('assessment_policy') == 'full-upload':
+            run['assessment_scope_policy'] = {'mode':'ALL_UPLOADED',
+                'manifest_sha256':sha(directory / 'source-upload-manifest.json'),
+                'archive_sha256':sha(archive), 'findings_approval':'REQUIRED_BEFORE_VALIDATION'}
         arguments = {'workspaceId': config['workspace_id'], 'jobName': run['run_id'],
                      'objective': 'Assess the source archive at ' + source_uri + '. Source commit ' + run['source']['commit'] +
                                   '. Scope: ' + run['objective'] +
-                                  '. Produce discovery, documentation, rule candidates, data/dependency analysis and a draft test plan.',
+                                  '. Produce discovery, documentation, rule candidates and data/dependency analysis. '
+                                  'Do not add decomposition editing, test-plan refinement, code generation or deployment.',
                      'intent': config.get('intent', 'Assess this mainframe application; preserve required human review tasks.')}
         if config.get('orchestrator_agent'):
             arguments['orchestratorAgent'] = config['orchestrator_agent']

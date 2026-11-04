@@ -68,7 +68,14 @@ def initialize(args, work):
     require(not git(FRAMEWORK, 'status', '--porcelain'), 'Use a clean committed framework checkout')
     work.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.chmod(0o700)
-    if args.source.startswith('https://'):
+    source_record = None
+    if args.source.startswith('s3://'):
+        from modernize_source import from_s3
+        from urllib.parse import urlsplit
+        args.bucket = args.bucket or urlsplit(args.source).netloc
+        source_record = from_s3(args.source, work, args.aws_profile, args.region)
+        source = Path(source_record['root'])
+    elif args.source.startswith('https://'):
         require(bool(re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?', args.source)),
                 'Remote source must be a GitHub HTTPS repository URL without credentials/query')
         source = work / 'source'
@@ -83,8 +90,10 @@ def initialize(args, work):
         require(args.source.startswith('https://'), '--ref only applies to a new managed clone; pin local checkout yourself')
         result = subprocess.run(['git', '-C', str(source), 'checkout', '--detach', args.ref], capture_output=True, text=True)
         require(result.returncode == 0, 'Requested source ref could not be checked out')
-    require(not git(source, 'status', '--porcelain'), 'Source checkout must be clean')
+    if source_record is None:
+        require(not git(source, 'status', '--porcelain'), 'Source checkout must be clean')
     config = kw.settings(args.settings)
+    config['transform'].setdefault('assessment_policy', 'full-upload')
     if args.executor == 'claude' and not config['executor_model']:
         config['executor_model'] = 'claude-sonnet-5-5'
     if not config['reviewer_model']:
@@ -92,7 +101,7 @@ def initialize(args, work):
     validate_model_pair(args.executor, config)
     config['transform'].update({k: v for k, v in {'workspace_id': args.transform_workspace,
         'upload_prefix': ('s3://' + args.bucket + '/modernize') if args.bucket else None}.items() if v})
-    project = {'version': 2, 'scope': args.scope, 'source': {'root': str(source),
+    project = {'version': 2, 'scope': args.scope, 'source': source_record or {'root': str(source),
         'repository': git(source, 'remote', 'get-url', 'origin'), 'commit': git(source, 'rev-parse', 'HEAD')},
         'framework_commit': git(FRAMEWORK, 'rev-parse', 'HEAD'), 'settings': config,
         'aws': {'profile': args.aws_profile, 'region': args.region, 'bucket': args.bucket},
@@ -264,20 +273,41 @@ def assessment_tasks(work, project, args, client=None):
                   'detail_path': str(path)}
         if args.details:
             record['details'] = detail
-        if getattr(args, 'configure_documentation', False) and task.get('uxComponentId') == 'MainframeDocGenInputComponent':
+        report_components = {'MainframeBreResultComponent', 'MainframeDocGenResultComponent', 'MainframeDataLineageResultComponent'}
+        if getattr(args, 'continue_code_analysis', False) and task.get('uxComponentId') in report_components:
+            require(task.get('taskId') == task_id and task.get('jobMetadata') == identity,
+                    'Report task identity changed')
+            require(task.get('_outputSchema', {}).get('displayOnly') is True,
+                    'Report task now requires a decision; no acknowledgment submitted')
+            intent = directory / ('report-' + digest(task_id) + '-intent.json')
+            receipt = directory / ('report-' + digest(task_id) + '-receipt.json')
+            if not receipt.exists():
+                require(not intent.exists(), 'Report acknowledgment outcome uncertain; reconcile before retrying')
+                write(intent, {'task_id':task_id,'decision':'Retain generated findings for final assessment review'})
+                response = service.calls([('load_instructions',identity),('complete_task',{
+                    **identity,'taskId':task_id,'action':'APPROVE'})])[-1]
+                write(receipt,response)
+            record['continuation'] = 'SUBMITTED_UNCHANGED'
+        if getattr(args, 'configure_documentation', False) and task.get('uxComponentId') in {'MainframeDocGenInputComponent', 'MainframeBreInputComponent'}:
+            is_rules = task['uxComponentId'] == 'MainframeBreInputComponent'
             policy = run.get('assessment_scope_policy', {})
             manifest = directory / 'source-upload-manifest.json'
             require(policy.get('mode') == 'ALL_UPLOADED' and sha(manifest) == policy.get('manifest_sha256'), 'Authorize the recorded full-upload scope first')
             schema = task.get('_outputSchema', {})
-            require(set(schema.get('required', [])) == {'detailLevel','userSelectedFiles'}
-                    and 'DETAILED' in schema.get('properties', {}).get('detailLevel', {}).get('enum', []), 'Documentation schema changed')
+            required = {'reportScope','detailedLevel','userSelectedFiles'} if is_rules else {'detailLevel','userSelectedFiles'}
+            require(set(schema.get('required', [])) == required, 'Assessment selection schema changed')
+            if is_rules:
+                require('fileLevel' in schema.get('properties', {}).get('reportScope', {}).get('enum', []), 'Business rule scope enum changed')
+            else:
+                require('DETAILED' in schema.get('properties', {}).get('detailLevel', {}).get('enum', []), 'Documentation detail enum changed')
             require(task.get('taskId') == task_id and task.get('jobMetadata') == identity, 'Documentation task identity mismatch')
-            offered = detail.get('agentArtifactContent', {}).get('properties', {}).get('docGenInput', [])
+            offered = detail.get('agentArtifactContent', {}).get('properties', {}).get('breInput' if is_rules else 'docGenInput', [])
             allowed = {f['path'] for f in read(manifest)['included']}
             selected = [{k:v for k,v in f.items() if k in {'name','path','fileType','totalLines','folderPath'}} for f in offered if 'folderPath' in f]
             require(selected and all(f.get('path') in allowed for f in selected)
                     and len({f['path'] for f in selected}) == len(selected), 'Documentation selection is empty, duplicated or outside the upload')
-            content = {'detailLevel':'DETAILED','userSelectedFiles':selected}
+            content = ({'reportScope':'fileLevel','detailedLevel':True,'userSelectedFiles':selected} if is_rules
+                       else {'detailLevel':'DETAILED','userSelectedFiles':selected})
             intent = directory / ('documentation-' + digest(task_id) + '-intent.json')
             receipt = directory / ('documentation-' + digest(task_id) + '-receipt.json')
             if not receipt.exists():
@@ -331,7 +361,8 @@ def assessment(work, project, args, client=None):
         settings_file = work / 'run-settings.json'
         write(settings_file, project['settings'])
         directory = kw.initialize(SimpleNamespace(source=project['source']['root'], workspace=str(work),
-            settings=str(settings_file), objective=project['scope'], assessment=args.findings))
+            settings=str(settings_file), objective=project['scope'], assessment=args.findings,
+            source_record=project['source']))
         project['assessments'][label] = {'directory': str(directory)}
         persist(work, project)
     directory = Path(project['assessments'][label]['directory'])
@@ -353,6 +384,15 @@ def assessment(work, project, args, client=None):
         while not run['assessment_ready']:
             kw.assessment_step(run, directory, client)
             write(directory / 'run.json', run)
+            if (run['status'] == 'WAITING_FOR_HUMAN'
+                    and run['settings']['transform'].get('assessment_policy') == 'full-upload'):
+                result = assessment_tasks(work, project, SimpleNamespace(label=label, details=False,
+                    continue_code_analysis=True, configure_documentation=True), client)
+                handled = [task for task in result['tasks'] if task.get('documentation')
+                           or task.get('continuation') in {'SUBMITTED_UNCHANGED','ALREADY_SUBMITTED'}]
+                if handled:
+                    run.update(status='WAITING_FOR_ASSESSMENT', reason='Routine assessment checkpoint handled using the saved upload scope.')
+                    write(directory / 'run.json', run)
             polls += 1
             if not args.wait or run['status'] != 'WAITING_FOR_ASSESSMENT' or polls >= run['settings']['max_polls_per_resume']:
                 break
@@ -586,11 +626,12 @@ def review_site(work, project, args, runtime=model_call):
     verify_source(project)
     validate_screens(screens, spec)
     write(directory / 'screens.json', screens)
+    write(directory / 'api-contracts.json', screens['apis'])
     (directory / 'index.html').write_text(render_site(spec, screens, project['decisions']))
     (directory / 'index.html').chmod(0o600)
     project['site'] = {'directory': directory.name, 'specification': project['specification']['sha256'],
                        'decisions': digest(project['decisions']), 'provider': provider,
-                       'files': {p: sha(directory / p) for p in ('screens.json', 'index.html')}}
+                       'files': {p: sha(directory / p) for p in ('screens.json', 'index.html', 'api-contracts.json')}}
     project['stage'] = 'AWAITING_SPECIFICATIONS_APPROVAL'
     persist(work, project)
     return {'status': project['stage'], 'html': str(directory / 'index.html')}
@@ -658,6 +699,7 @@ def package(work, project):
             'Do not invent missing decisions or claim unexecuted tests passed. Respect deferred work boundaries.\n\n' +
             spec['sections'][section]['implementation_prompt'])
     shutil.copyfile(work / project['site']['directory'] / 'index.html', destination / 'review.html')
+    shutil.copyfile(work / project['site']['directory'] / 'api-contracts.json', destination / 'api-contracts.json')
     shutil.copyfile(work / project['preparation_report']['path'], destination / 'sme-architect-review.html')
     write(destination / 'provenance.json', {'source': {k: v for k, v in project['source'].items() if k != 'root'},
         'scope': project['scope'], 'framework_commit': project['framework_commit'],
@@ -906,6 +948,14 @@ def main(argv=None, reporter=None):
                         else: result = review_site(work, project, SimpleNamespace(provider=pending.get('provider')))
                         project.pop('pending_action', None)
                         persist(work, project)
+                    elif args.command == 'resume' and project['stage'] in {'ASSESSMENT_APPROVED', 'REVISION_PENDING', 'RUNNING_EXECUTOR', 'RUNNING_REVIEWER'}:
+                        result = pipeline(work, project, args)
+                    elif args.command == 'resume' and project['stage'] == 'VALIDATION_APPROVED':
+                        result = review_site(work, project, SimpleNamespace(provider=None))
+                    elif args.command == 'resume' and project['stage'] == 'SPECIFICATIONS_APPROVED':
+                        result = package(work, project)
+                    elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED'}:
+                        result = {'status': project['stage'], 'next_step': next_step(project)}
                     elif args.command == 'setup': result = setup(work, project, args)
                     elif args.command == 'tasks': result = assessment_tasks(work, project, args)
                     elif args.command == 'scope': result = assessment_scope(work, project, args)

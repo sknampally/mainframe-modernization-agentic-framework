@@ -92,6 +92,16 @@ class GuidedTests(unittest.TestCase):
         pipeline.assert_called_once()
         self.assertNotIn('pending_action',app.read(self.work/'project.json'))
 
+    def test_resume_advances_approved_phases_without_returning_to_aws(self):
+        for stage, function in [('ASSESSMENT_APPROVED','pipeline'),('VALIDATION_APPROVED','review_site'),
+                                ('SPECIFICATIONS_APPROVED','package')]:
+            with self.subTest(stage=stage):
+                app.write(self.work/'project.json',dict(self.project,active_assessment='run-1',stage=stage))
+                with patch.object(app,function,return_value={'status':'AWAITING_REVIEW'}) as handler, \
+                     patch.object(app,'assessment',side_effect=AssertionError('No AWS call after phase approval')):
+                    self.assertEqual(app.main(['--workspace',str(self.work),'resume'],reporter=lambda result:None),0)
+                handler.assert_called_once()
+
     def test_ctrl_c_during_first_init_prompt_has_no_traceback(self):
         output=[]
         with patch.object(guide,'guided_init',side_effect=KeyboardInterrupt):

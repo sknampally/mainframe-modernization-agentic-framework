@@ -88,7 +88,7 @@ source-upload/job authorization. Approvals prompt for owner, rationale and sourc
 provenance confirmation; they are never inferred. Validation approval after SME
 questions remains an explicit gate before HTML generation.
 
-When a new job asks for its initial custom plan, the controller sends the six
+When a new job asks for its initial custom plan, the controller sends the four
 assessment capability names with the saved source, connector and scope. It records
 each message before sending and retains its receipt. Resume uses the same job;
 uncertain sends require reconciliation. Plan selection never approves generated

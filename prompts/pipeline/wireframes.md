@@ -1,5 +1,13 @@
 # Business review wireframe content
 
+Include a top-level `apis` array alongside `screens`. Each API must have `id`,
+`method` (GET/POST/PUT/PATCH/DELETE), `path` (relative route beginning with /),
+`purpose`, `authentication`, `uncertainties`, `request` (structured object),
+`responses` (nonempty status-to-contract object), and `rule_ids` referencing the
+approved specification. Distinguish proposed interfaces from legacy facts. Use an
+empty array only where the approved design needs no APIs; explain why in the screen
+uncertainties. These are review contracts, not running endpoints.
+
 Use the approved specification and recorded SME decisions. Return one JSON object:
 `{"screens":[{"id":"screen-id","title":"Title","purpose":"Business purpose",
 "rule_ids":["known-rule-id"],"fields":["Field label and constraints"],
