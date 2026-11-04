@@ -104,12 +104,23 @@ class PreparationTests(unittest.TestCase):
         result = app.package(self.work, self.project)
         with zipfile.ZipFile(result['archive']) as archive:
             self.assertIn('ui-prompt.md', archive.namelist())
+            self.assertIn('AGENTS.md', archive.namelist())
+            self.assertIn('SKILL.md', archive.namelist())
+            self.assertEqual(json.loads(archive.read('ai-dlc.json'))['implementation_status'], 'NOT_STARTED')
             self.assertIn('infrastructure-prompt.md', archive.namelist())
             self.assertNotIn('project.json', archive.namelist())
             self.assertNotIn('source.zip', archive.namelist())
             self.assertTrue(all(not x.endswith(('.cs', '.tf')) for x in archive.namelist()))
             self.assertEqual(json.loads(archive.read('traceability.json'))['tests'][0]['status'], 'NOT RUN')
         self.assertEqual(self.project['stage'], 'PACKAGED')
+
+    def test_preparation_produces_html_before_human_validation(self):
+        self.validated()
+        report = self.project['preparation_report']
+        content = (self.work / report['path']).read_text()
+        self.assertIn('SME and architect review', content)
+        self.assertIn('Business rules', content)
+        self.assertEqual(report['specification'], self.project['specification']['sha256'])
 
     def test_phase_one_stops_and_never_calls_agents(self):
         self.assertEqual(self.assess()['status'], 'AWAITING_ASSESSMENT_APPROVAL')
