@@ -438,6 +438,6 @@ After the assessment is sealed, generate a private review index:
 modernize assessment-report
 ```
 
-Open the returned `assessment-review.html` locally. It links to original outputs
-and extracted text, displays the recorded scope and completion basis, and lists
-review checks. It does not approve the findings or start agent validation.
+Open the returned `assessment-review.html` locally. It leads with missing-input and code-issue reports, then groups business rules,
+data definitions and program PDFs. Logs, cover pages, metadata, hashes and duplicate
+JSON/text versions are omitted from the human view but retained as private evidence. It does not approve the findings or start agent validation.

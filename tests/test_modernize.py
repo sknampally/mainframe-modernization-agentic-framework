@@ -206,6 +206,33 @@ class PreparationTests(unittest.TestCase):
         self.assertIn('Awaiting human review',page)
         self.assertFalse(self.project['approvals'])
 
+    def test_human_review_omits_logs_metadata_and_duplicate_document_formats(self):
+        self.assess()
+        directory = Path(self.project['assessments']['a']['directory'])
+        run = app.read(directory/'run.json')
+        run['assessment_originals'] = []
+        cases = [('logs/process.log','private-log.txt',[]),
+                 ('documentation/CoverPage.pdf','cover.pdf',[]),
+                 ('documentation/metadata/summary.json','metadata.json',[]),
+                 ('documentation/app/PROGRAM-cbl.json','duplicate.json',[]),
+                 ('documentation/app/PROGRAM-cbl.pdf','program.pdf',[]),
+                 ('results/analyze_code_results.zip','analysis.zip',[{'member':'missing_fixture.csv','file':'rules.json'}]),
+                 ('1/business-documentation/output.zip','rules.zip',[])]
+        for key, filename, texts in cases:
+            path = directory/filename;path.write_text('fixture')
+            run['assessment_originals'].append({'file':filename,'sha256':app.sha(path),
+                'source':{'assetKey':'transform-output/fixture/'+key},'text_files':texts})
+        app.write(directory/'run.json',run)
+        report = app.assessment_report(self.work,self.project,argparse.Namespace(label='a'))
+        page = Path(report['report']).read_text()
+        for filename in ['private-log.txt','cover.pdf','metadata.json','duplicate.json']:
+            self.assertNotIn('href="'+filename+'"',page)
+        for text in ['program.pdf','Missing dependencies (CSV)','Download business-rule reports','Program documentation (1)']:
+            self.assertIn(text,page)
+        self.assertNotIn(app.sha(directory/'program.pdf'),page)
+        self.assertEqual(app.read(directory/'run.json'),run)
+        self.assertTrue((directory/'private-log.txt').exists())
+
     def test_original_export_tamper_blocks_assessment_approval(self):
         self.assess()
         directory = Path(self.project['assessments']['a']['directory'])
