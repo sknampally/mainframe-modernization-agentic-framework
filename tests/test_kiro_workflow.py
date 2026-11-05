@@ -534,6 +534,24 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
         self.assertTrue((self.directory / 'assessment/finding-0.txt').is_file())
 
+    def test_export_listing_traverses_returned_job_folders_and_rejects_escape(self):
+        seen = []
+        class Client:
+            escape = False
+            def calls(self, requests):
+                args = requests[-1][1]; prefix = args.get('pathPrefix'); seen.append(prefix)
+                if prefix is None:
+                    return [{}, {'folders':['transform-output/fixture/docs/']}]
+                return [{}, {'connectorId':'fixture-connector','folders':['transform-output/fixture/docs/'],
+                             'assets':[{'assetKey': 'another-job/secrets.json' if self.escape else prefix+'rules.json'}]}]
+        client = Client()
+        result = flow.list_assessment_exports(self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertEqual(seen,[None,'transform-output/fixture/docs/'])
+        self.assertEqual(len(result['assets']),1)
+        client.escape = True
+        with self.assertRaisesRegex(flow.Blocked,'outside this job'):
+            flow.list_assessment_exports(self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+
     def test_export_deduplicates_and_batches_complete_downloads(self):
         run = self.prepare_job(); batches = []
         class Client:
@@ -562,7 +580,7 @@ class WorkflowTests(unittest.TestCase):
             flow.export_findings(run,self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
         self.assertFalse(run['assessment_ready'])
         client.folders = ['nested/']
-        with self.assertRaisesRegex(flow.Blocked,'nested folders'):
+        with self.assertRaisesRegex(flow.Blocked,'outside this job'):
             flow.export_findings(run,self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
         self.assertFalse(run['assessment_ready'])
 

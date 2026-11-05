@@ -268,16 +268,48 @@ def unwrap_mcp(value):
     raise Blocked('AWS response envelope nesting exceeded supported limit')
 
 
+def list_assessment_exports(directory, client, identity):
+    """Traverse only service-returned output folders belonging to this job."""
+    roots = (f"transform-output/{identity['jobId']}/",
+             f"AWSTransform/Workspaces/{identity['workspaceId']}/Jobs/{identity['jobId']}/")
+    queue, visited = [None], set()
+    merged = {'artifacts': [], 'assets': [], 'folders': []}
+    while queue:
+        prefix = queue.pop(0)
+        if prefix in visited:
+            continue
+        visited.add(prefix)
+        require(len(visited) <= 1000, 'Assessment folder traversal exceeds 1000 folders')
+        args = {**identity, 'resource':'artifacts'}
+        if prefix is not None:
+            args['pathPrefix'] = prefix
+        listing = client.calls([('load_instructions', identity), ('list_resources', args)])[-1]
+        private_save(directory / ('artifact-listing-' + hashlib.sha256(str(prefix).encode()).hexdigest() + '.json'), listing)
+        require(not listing.get('nextToken'), 'Artifact listing has unresolved pagination')
+        merged['artifacts'].extend(listing.get('artifacts', listing.get('items', [])))
+        connector = listing.get('connectorId')
+        for asset in listing.get('assets', []):
+            require(isinstance(asset, dict) and isinstance(asset.get('assetKey'), str)
+                    and asset['assetKey'].startswith(roots) and safe_name(asset['assetKey']),
+                    'Returned asset is outside this job output')
+            merged['assets'].append({**asset, 'connectorId':connector})
+        require(len(merged['artifacts']) + len(merged['assets']) <= 10000, 'Assessment listing exceeds bounded inventory')
+        for folder in listing.get('folders', []):
+            require(isinstance(folder, str) and folder.startswith(roots) and folder.endswith('/')
+                    and safe_name(folder.rstrip('/')), 'Returned folder is outside this job output')
+            if folder not in visited and folder not in queue:
+                queue.append(folder)
+    merged['traversed_folders'] = sorted(p for p in visited if p is not None)
+    private_save(directory / 'artifact-listing.json', merged)
+    return merged
+
+
 def export_findings(run, directory, client, identity):
     """Retrieve server-returned artifact IDs/assets; do not guess an export path."""
     target = directory / 'transform-artifacts'
     target.mkdir(exist_ok=True, mode=0o700)
-    listing = client.calls([('load_instructions', identity),
-                           ('list_resources', {**identity, 'resource': 'artifacts'})])[-1]
-    private_save(directory / 'artifact-listing.json', listing)
+    listing = list_assessment_exports(directory, client, identity)
     requests, seen = [], set()
-    require(not listing.get('folders'),
-            'Assessment exports contain nested folders; configure a complete output_location before sealing findings')
     for item in listing.get('artifacts', listing.get('items', [])):
         if isinstance(item, dict) and item.get('artifactId'):
             key = ('artifact', item['artifactId'])
@@ -285,14 +317,14 @@ def export_findings(run, directory, client, identity):
                 seen.add(key)
                 requests.append({'resource': 'artifact', 'artifactId': item['artifactId']})
     for item in listing.get('assets', []):
-        require(isinstance(item, dict) and item.get('assetKey') and listing.get('connectorId'),
+        require(isinstance(item, dict) and item.get('assetKey') and item.get('connectorId'),
                 'Asset export lacks identity or connector; findings cannot be sealed')
         require(Path(item['assetKey']).suffix.lower() in TEXT_SUFFIXES,
                 'Assessment includes a non-text asset; configure a complete text-output location')
         key = ('asset', item['assetKey'])
         if key not in seen:
             seen.add(key)
-            requests.append({'resource': 'asset', 'assetKey': item['assetKey'], 'connectorId': listing['connectorId']})
+            requests.append({'resource': 'asset', 'assetKey': item['assetKey'], 'connectorId': item['connectorId']})
     require(len(requests) <= 1000, 'More than 1000 top-level artifacts; configure a bounded output_location in saved settings')
     require(requests, 'No downloadable top-level artifacts returned; configure output_location for nested/S3 exports')
     # Bound each transport session; a large export must not share one 180-second timeout.
@@ -323,6 +355,9 @@ def export_findings(run, directory, client, identity):
     for path in target.glob('finding-*.txt'):
         if path not in expected:
             path.unlink()
+    private_save(directory / 'artifact-download-index.json', [
+        {'file': path.name, 'source': request, 'sha256':sha(path), 'bytes':path.stat().st_size}
+        for path, request in zip(expected, requests)])
     collect_assessment(run, directory, str(target))
     run['assessment_provenance']['baseline_match'] = 'Job requested for this recorded source archive; ingestion and semantic content remain unverified'
 
