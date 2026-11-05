@@ -426,6 +426,15 @@ def bootstrap_assessment_plan(run, directory, client, identity, snapshot):
     return True
 
 
+def assessment_plan_complete(snapshot):
+    """An optional invitation may keep the job open after every assessment step finishes."""
+    steps = snapshot.get('plan', {}).get('steps', [])
+    expected = {'Kick off modernization', 'Analyze code', 'Analyze data',
+                'Generate technical documentation', 'Extract business logic'}
+    return (len(steps) == len(expected) and {s.get('stepName') for s in steps} == expected
+            and all(s.get('status') == 'SUCCEEDED' for s in steps))
+
+
 def start_assessment_plan(run, directory, client, identity, snapshot):
     """Start only the exact assessment plan already authorized by this run."""
     steps = snapshot.get('plan', {}).get('steps', [])
@@ -618,7 +627,9 @@ def assessment_step(run, directory, client=None):
     if pending or (not tasks and snapshot.get('_pollingGuidance', {}).get('hasPendingTasks') is True):
         run['status'] = 'WAITING_FOR_HUMAN'
         run['reason'] = 'AWS has a pending human task even though the overall job may still be executing. Complete the authorized task, then resume.'
-    elif status in {'COMPLETED', 'SUCCEEDED'}:
+    elif status in {'COMPLETED', 'SUCCEEDED'} or (status in {'EXECUTING', 'IN_PROGRESS', 'RUNNING'} and assessment_plan_complete(snapshot)):
+        run['assessment_completion'] = {'basis': 'terminal_job' if status in {'COMPLETED', 'SUCCEEDED'} else 'all_authorized_steps_succeeded',
+                                        'service_job_status': status}
         # Export paths vary by workflow. Ingest explicit configured output, never guess an artifact ID.
         output = config.get('output_location')
         if output:

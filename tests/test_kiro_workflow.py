@@ -259,6 +259,21 @@ class WorkflowTests(unittest.TestCase):
         snapshot['messages']['messages'][0]['text'] = 'The plan is ready. I can start the execution.'
         return run, snapshot, identity
 
+    def test_completed_assessment_plan_exports_while_optional_invitation_remains(self):
+        run, snapshot, identity = self.execution_fixture()
+        for step in snapshot['plan']['steps']: step['status'] = 'SUCCEEDED'
+        self.assertTrue(flow.assessment_plan_complete(snapshot))
+        snapshot.update(job={'jobId':'fixture-job','status':'EXECUTING'}, tasks={'hitlTasks':[
+            {'status':'AWAITING_HUMAN_INPUT','blockingType':'NON_BLOCKING'}]})
+        class Client:
+            def calls(self, requests): return [{},snapshot]
+        with patch.object(flow,'export_findings') as export:
+            flow.assessment_step(run,self.directory,Client())
+            export.assert_called_once()
+        self.assertEqual(run['assessment_completion']['service_job_status'],'EXECUTING')
+        snapshot['plan']['steps'].pop()
+        self.assertFalse(flow.assessment_plan_complete(snapshot))
+
     def test_execution_start_is_exact_and_receipted_once(self):
         run, snapshot, identity = self.execution_fixture()
         calls = []
