@@ -434,6 +434,7 @@ def assessment(work, project, args, client=None):
             time.sleep(run['settings']['poll_seconds'])
         if run['assessment_ready']:
             run['status'] = 'AWAITING_ASSESSMENT_APPROVAL'
+            run['reason'] = 'Assessment outputs downloaded and sealed; human review is required before validation.'
             project['assessments'][label]['sha256'] = digest(run['assessment_index'])
             project['stage'] = run['status'] if not project.get('selected') else project['stage']
     except Exception:

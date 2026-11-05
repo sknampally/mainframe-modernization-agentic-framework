@@ -186,6 +186,13 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(pilot.Blocked, 'never creates'):
             app.assessment(self.work, self.project, self.args('resume', '--label', 'missing'))
 
+    def test_sealed_assessment_replaces_stale_wait_reason(self):
+        result = self.assess()
+        directory = Path(self.project['assessments']['a']['directory'])
+        run = app.read(directory/'run.json')
+        self.assertEqual(run['status'],'AWAITING_ASSESSMENT_APPROVAL')
+        self.assertIn('downloaded and sealed',run['reason'])
+
     def test_assessment_review_index_escapes_content_and_does_not_approve(self):
         self.assess()
         directory = Path(self.project['assessments']['a']['directory'])
