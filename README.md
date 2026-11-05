@@ -16,8 +16,9 @@ Windows currently uses Ubuntu/WSL2; native PowerShell runtime is not supported.
 The final `.` in the install command is required.
 
 **New workstation? Follow the [engineer installation and login guide](docs/engineer-setup.md) first.**
-Then use the [CLI guide](docs/cli-guide.md). Supply a GitHub URL or clean local
-Git checkout, configure your own AWS/provider access, and use the built-in protocols.
+Then use the [CLI guide](docs/cli-guide.md) and [four-phase workflow](docs/four-phase-workflow.md).
+Supply an S3 source ZIP, GitHub URL or clean local Git checkout, configure your own
+AWS/provider access, and use the built-in protocols.
 No custom prompt writing or manual agent handoffs are required for normal operation.
 
 ```bash
@@ -46,7 +47,7 @@ Generated documentation is useful input, but it does not prove business behavior
 
 | Capability | Evidence status | Public repository status |
 | --- | --- | --- |
-| AWS Transform assessment | Setup/job adapters tested with fixtures; live acceptance pending | GitHub/local source, chosen S3 destination, workspace/connector setup, existing local/S3 findings, wait/resume |
+| AWS Transform assessment | Setup/job adapters tested with fixtures; live acceptance pending | S3 ZIP or GitHub/local source, chosen S3 destination, workspace/connector setup, existing local/S3 findings, wait/resume |
 | Independent validation | Structural checks and synthetic handoff verified | Claude Sonnet executor plus Claude Opus reviewer independently request source and findings; distinct pinned model IDs, bounded rework |
 | Approval gates | Hash invalidation tested | Separate assessment, SME/architect and business specification gates |
 | HTML business review | Deterministic rendering and escaping tested | Claude/Codex-generated screen content; inert HTML with rules, states and specifications |
