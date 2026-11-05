@@ -400,7 +400,7 @@ errors for private troubleshooting and safe reconciliation.
 ### Applying a controller fix during an assessment
 
 Stop the local watcher before updating Reframe; the AWS job remains intact. From a
-clean committed framework checkout, before any assessment approval, run:
+clean committed framework checkout, before a preparation candidate or downstream approval exists, run:
 
 ```bash
 modernize upgrade-framework --note "Describe the controller fix being applied"
@@ -409,7 +409,7 @@ modernize resume --wait
 
 This validates source integrity and records the old and new framework revisions in
 both project and run history. It preserves job identity, evidence and mutation
-receipts. It refuses upgrades after approval or while job creation is uncertain.
+receipts. It refuses upgrades after a preparation candidate or downstream approval, or while job creation is uncertain. An existing assessment approval is retained only after verifying its exact evidence fingerprint and original files.
 It does not change the assessment scope or approve findings. A run with such an
 upgrade must disclose that it used multiple controller revisions.
 
@@ -449,3 +449,15 @@ missing-dependency row counts. Source links identify each input; duplicate rows
 are not silently treated as unique files or issue categories. AWS documentation
 summaries, when supplied, are displayed verbatim under an expandable section and
 labeled as AWS-generated. No LLM is called to produce or rewrite this summary.
+
+Preparation agents receive descriptive evidence labels and a bounded rolling read
+context. Full read receipts stay private; omitted older bodies are explicitly
+indexed and can be requested again. Per-role working notes are model claims, not
+new evidence. Read-size errors return corrective feedback within the same recorded
+call budget. An upgrade does not reset consumed calls or grant further approval.
+
+If a provider declines a request under its safeguards, Reframe records
+`PROVIDER_REVIEW_REQUIRED` and stops automatic retries. This is not a reviewer
+finding, authentication failure or approval. Inspect the private provider receipt
+and request content before deciding how to resolve it. Requests are saved privately
+for subsequent calls; existing assessment approval and consumed call counts remain.

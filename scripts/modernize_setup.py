@@ -276,6 +276,8 @@ def refresh_unstarted_baseline(work, project):
 
 
 def next_step(project):
+    if project['stage'] == 'PROVIDER_REVIEW_REQUIRED':
+        return 'Review the private provider refusal and request content; automatic model retries are stopped.'
     stage = project['stage']
     if project.get('pending_action'): return 'modernize resume'
     if stage == 'PACKAGED': return 'Inspect the generated package and its deferred work boundaries.'
