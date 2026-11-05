@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import kiro_workflow as kw
 from pilot import Blocked, git, require, sha
 from modernize_artifacts import digest, validate_spec, validate_screens, render_site, render_assessment_facts, SECTIONS
-from modernize_models import call as model_call
+from modernize_models import call as model_call, ProviderSafetyRefusal, check_provider_refusals
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
 
@@ -709,6 +709,7 @@ def pipeline(work, project, args, runtime=model_call):
         return {'status': project['stage'], 'specification': project['specification']}
     area = work / 'preparation'
     area.mkdir(exist_ok=True, mode=0o700)
+    check_provider_refusals(area)
     while state['calls'] < project['settings']['max_model_calls']:
         role, number = state['role'], state['round']
         key = f'{number}:{role}'
@@ -1156,13 +1157,13 @@ def main(argv=None, reporter=None):
                         else: result = review_site(work, project, SimpleNamespace(provider=pending.get('provider')))
                         project.pop('pending_action', None)
                         persist(work, project)
-                    elif args.command == 'resume' and project['stage'] in {'ASSESSMENT_APPROVED', 'REVISION_PENDING', 'RUNNING_EXECUTOR', 'RUNNING_REVIEWER'}:
+                    elif args.command == 'resume' and (project['stage'] in {'ASSESSMENT_APPROVED', 'REVISION_PENDING', 'RUNNING_EXECUTOR', 'RUNNING_REVIEWER'} or (project['stage'] == 'WAITING_FOR_RUNTIME' and project.get('pipeline'))):
                         result = pipeline(work, project, args)
                     elif args.command == 'resume' and project['stage'] == 'VALIDATION_APPROVED':
                         result = review_site(work, project, SimpleNamespace(provider=None))
                     elif args.command == 'resume' and project['stage'] == 'SPECIFICATIONS_APPROVED':
                         result = package(work, project)
-                    elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED'}:
+                    elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
                     elif args.command == 'assessment-report': result = assessment_report(work, project, args)
                     elif args.command == 'upgrade-framework': result = upgrade_framework(work, project, args)
@@ -1184,6 +1185,11 @@ def main(argv=None, reporter=None):
                         persist(work, project)
                 except KeyboardInterrupt:
                     # Retain budgets and phase markers while still holding the project lock.
+                    persist(work, project)
+                    raise
+                except ProviderSafetyRefusal as error:
+                    project['stage'] = 'PROVIDER_REVIEW_REQUIRED'
+                    project['pipeline'].update(status='PROVIDER_REVIEW_REQUIRED', reason=str(error))
                     persist(work, project)
                     raise
                 except kw.RuntimeUnavailable:

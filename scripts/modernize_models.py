@@ -10,6 +10,24 @@ from pilot import Blocked, require
 from kiro_workflow import private_save, kiro_call, RuntimeUnavailable
 
 
+class ProviderSafetyRefusal(Blocked):
+    """A provider policy refusal requires review, not an automatic runtime retry."""
+
+
+def check_provider_refusals(directory):
+    for path in directory.glob('provider-*.json'):
+        receipt = json.loads(path.read_text())
+        if receipt.get('provider') != 'claude':
+            continue
+        try:
+            envelope = json.loads(receipt.get('stdout', ''))
+        except (ValueError, TypeError):
+            continue
+        result = str(envelope.get('result', ''))
+        if envelope.get('is_error') and ('safeguards flagged' in result.lower() or '[reasoning_extraction]' in result):
+            raise ProviderSafetyRefusal('Claude refused a request under its safeguards. Review the private provider receipt and request content before any further model calls; no candidate approval is implied.')
+
+
 def call(provider, run, directory, role, message):
     require(provider in {'kiro', 'claude', 'codex'}, 'Unknown provider')
     if provider == 'kiro':
@@ -35,6 +53,8 @@ def call(provider, run, directory, role, message):
                    '-c', 'mcp_servers={}', '-c', 'features.apps=false', '-']
     if model:
         command[1:1] = ['--model', model]
+    private_save(directory / f'provider-request-{run["model_calls"]}.json',
+                 {'provider':provider, 'role':role, 'requested_model':model, 'message':message})
     process = subprocess.Popen(command, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
@@ -50,6 +70,7 @@ def call(provider, run, directory, role, message):
     private_save(directory / f'provider-{run["model_calls"]}.json',
                  {'provider': provider, 'role': role, 'requested_model': model, 'returncode': process.returncode,
                   'stdout': stdout, 'stderr': stderr})
+    check_provider_refusals(directory)
     if process.returncode:
         raise RuntimeUnavailable('Provider failed; inspect private provider receipt and resume')
     if provider == 'claude':

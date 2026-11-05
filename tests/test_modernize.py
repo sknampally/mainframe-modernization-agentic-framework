@@ -18,6 +18,16 @@ import pilot
 
 
 class PreparationTests(unittest.TestCase):
+    def test_saved_provider_safeguard_refusal_blocks_without_new_model_calls(self):
+        self.baseline()
+        area=self.work/'preparation';area.mkdir()
+        app.write(area/'provider-1.json', {'provider':'claude','stdout':json.dumps({
+            'is_error':True,'result':'Safeguards flagged this message [reasoning_extraction]'})})
+        with self.assertRaises(app.ProviderSafetyRefusal):
+            app.pipeline(self.work,self.project,self.args('validate'),
+                         runtime=lambda *args: self.fail('Must not retry refused request'))
+        self.assertEqual(self.project['pipeline']['calls'],0)
+
     def test_preparation_context_compacts_without_mutating_read_receipts(self):
         history = [{'request':{'area':'source','paths':[str(n)]}, 'response':[
             {'area':'source','path':str(n),'text':str(n)*2000}]} for n in range(3)]

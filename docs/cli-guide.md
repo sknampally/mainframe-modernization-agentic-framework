@@ -455,3 +455,9 @@ context. Full read receipts stay private; omitted older bodies are explicitly
 indexed and can be requested again. Per-role working notes are model claims, not
 new evidence. Read-size errors return corrective feedback within the same recorded
 call budget. An upgrade does not reset consumed calls or grant further approval.
+
+If a provider declines a request under its safeguards, Reframe records
+`PROVIDER_REVIEW_REQUIRED` and stops automatic retries. This is not a reviewer
+finding, authentication failure or approval. Inspect the private provider receipt
+and request content before deciding how to resolve it. Requests are saved privately
+for subsequent calls; existing assessment approval and consumed call counts remain.
