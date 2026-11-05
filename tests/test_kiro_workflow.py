@@ -519,6 +519,38 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
         self.assertTrue((self.directory / 'assessment/finding-0.txt').is_file())
 
+    def test_export_deduplicates_and_batches_complete_downloads(self):
+        run = self.prepare_job(); batches = []
+        class Client:
+            def calls(self, requests):
+                if any(name == 'list_resources' for name,_ in requests):
+                    return [{}, {'artifacts':[{'artifactId':str(i)} for i in range(21)] + [{'artifactId':'0'}]}]
+                downloads = [args for name,args in requests if name == 'get_resource']
+                batches.append(len(downloads))
+                for args in downloads:
+                    (Path(args['savePath'])/args['fileName']).write_text('finding')
+                return [{} for _ in requests]
+        flow.export_findings(run,self.directory,Client(),{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertEqual(batches,[10,10,1])
+        self.assertEqual(len(run['assessment_index']),21)
+
+    def test_export_missing_file_or_nested_results_cannot_be_sealed(self):
+        run = self.prepare_job()
+        class Client:
+            folders = []
+            def calls(self, requests):
+                if any(name == 'list_resources' for name,_ in requests):
+                    return [{}, {'artifacts':[{'artifactId':'fixture'}], 'folders':self.folders}]
+                return [{} for _ in requests]
+        client = Client()
+        with self.assertRaisesRegex(flow.Blocked,'every expected file'):
+            flow.export_findings(run,self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertFalse(run['assessment_ready'])
+        client.folders = ['nested/']
+        with self.assertRaisesRegex(flow.Blocked,'nested folders'):
+            flow.export_findings(run,self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertFalse(run['assessment_ready'])
+
     def test_model_subprocess_timeout_is_terminated_and_resumable(self):
         run = self.load(); run['model_calls'] = 1
         run['settings']['call_timeout_seconds'] = 1

@@ -275,28 +275,54 @@ def export_findings(run, directory, client, identity):
     listing = client.calls([('load_instructions', identity),
                            ('list_resources', {**identity, 'resource': 'artifacts'})])[-1]
     private_save(directory / 'artifact-listing.json', listing)
-    requests = []
+    requests, seen = [], set()
+    require(not listing.get('folders'),
+            'Assessment exports contain nested folders; configure a complete output_location before sealing findings')
     for item in listing.get('artifacts', listing.get('items', [])):
         if isinstance(item, dict) and item.get('artifactId'):
-            requests.append({'resource': 'artifact', 'artifactId': item['artifactId']})
+            key = ('artifact', item['artifactId'])
+            if key not in seen:
+                seen.add(key)
+                requests.append({'resource': 'artifact', 'artifactId': item['artifactId']})
     for item in listing.get('assets', []):
-        if isinstance(item, dict) and item.get('assetKey') and listing.get('connectorId'):
-            if Path(item['assetKey']).suffix.lower() in TEXT_SUFFIXES:
-                requests.append({'resource': 'asset', 'assetKey': item['assetKey'], 'connectorId': listing['connectorId']})
+        require(isinstance(item, dict) and item.get('assetKey') and listing.get('connectorId'),
+                'Asset export lacks identity or connector; findings cannot be sealed')
+        require(Path(item['assetKey']).suffix.lower() in TEXT_SUFFIXES,
+                'Assessment includes a non-text asset; configure a complete text-output location')
+        key = ('asset', item['assetKey'])
+        if key not in seen:
+            seen.add(key)
+            requests.append({'resource': 'asset', 'assetKey': item['assetKey'], 'connectorId': listing['connectorId']})
     require(len(requests) <= 1000, 'More than 1000 top-level artifacts; configure a bounded output_location in saved settings')
     require(requests, 'No downloadable top-level artifacts returned; configure output_location for nested/S3 exports')
-    calls = [('load_instructions', identity)]
-    for index, arguments in enumerate(requests):
-        calls.append(('get_resource', {**identity, **arguments, 'savePath': str(target), 'fileName': f'finding-{index}.txt'}))
-    client.calls(calls)
-    # Reject binary/archives instead of pretending a service-status snapshot is the assessment.
-    for path in target.glob('finding-*.txt'):
+    # Bound each transport session; a large export must not share one 180-second timeout.
+    expected = []
+    for offset in range(0, len(requests), 10):
+        calls = [('load_instructions', identity)]
+        for index, arguments in enumerate(requests[offset:offset + 10], offset):
+            filename = f'finding-{index}.txt'
+            path = target / filename
+            # Never mistake an earlier failed download for a successful retry.
+            if path.exists():
+                path.unlink()
+            expected.append(path)
+            calls.append(('get_resource', {**identity, **arguments, 'savePath': str(target), 'fileName': filename}))
+        client.calls(calls)
+    total = 0
+    for path in expected:
+        require(path.is_file() and not path.is_symlink(), 'Artifact download did not produce every expected file')
+        total += path.stat().st_size
+        require(total <= run['settings']['max_assessment_bytes'], 'Assessment export exceeds byte limit')
         raw = path.read_bytes()
         require(b'\0' not in raw, 'Binary artifact export requires an explicit text-output location')
         try:
             raw.decode('utf-8')
         except UnicodeDecodeError as error:
             raise Blocked('Non-UTF-8 artifact; configure a text-output location') from error
+    # Exclude stale files if the service listing changed during a retry.
+    for path in target.glob('finding-*.txt'):
+        if path not in expected:
+            path.unlink()
     collect_assessment(run, directory, str(target))
     run['assessment_provenance']['baseline_match'] = 'Job requested for this recorded source archive; ingestion and semantic content remain unverified'
 
