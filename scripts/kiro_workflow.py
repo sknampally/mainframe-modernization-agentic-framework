@@ -400,6 +400,47 @@ def bootstrap_assessment_plan(run, directory, client, identity, snapshot):
     return True
 
 
+def start_assessment_plan(run, directory, client, identity, snapshot):
+    """Start only the exact assessment plan already authorized by this run."""
+    steps = snapshot.get('plan', {}).get('steps', [])
+    expected = {'Kick off modernization', 'Analyze code', 'Analyze data',
+                'Generate technical documentation', 'Extract business logic'}
+    if not steps or any(step.get('status') != 'NOT_STARTED' for step in steps):
+        return False
+    messages = [m for m in snapshot.get('messages', {}).get('messages', [])
+                if m.get('messageOrigin') == 'SYSTEM'
+                and m.get('processingInfo', {}).get('messageType') == 'FINAL_RESPONSE']
+    if not messages:
+        return False
+    latest = max(messages, key=lambda m: str(m.get('createdAt', '')))
+    text = latest.get('text', '').lower()
+    if not ('plan' in text and 'ready' in text and 'start the execution' in text):
+        return False
+    require(run['settings'].get('allow_new_assessments'), 'Assessment execution is not authorized')
+    require(len(steps) == len(expected) and {s.get('stepName') for s in steps} == expected,
+            'Generated plan differs from the authorized assessment capabilities; inspect before starting')
+    intent = directory / 'plan-execution-intent.json'
+    receipt = directory / 'plan-execution-receipt.json'
+    if receipt.exists():
+        run.update(status='WAITING_FOR_ASSESSMENT', reason='Execution request receipted; waiting for AWS to start the plan.')
+        return True
+    if intent.exists():
+        run.update(status='NEEDS_RECONCILIATION', reason='Execution request outcome uncertain; reconcile before retrying.')
+        return True
+    message = ('Start execution of the existing assessment plan in this job now. '
+               'Use the already recorded connector and source archive. Execute only kickoff, '
+               'code analysis, data analysis, technical documentation and business-rule extraction. '
+               'Do not create another job, add capabilities, implement or deploy. '
+               'This starts the authorized assessment; final findings remain subject to human review.')
+    private_save(intent, {'identity': identity, 'reply_to': latest.get('messageId'), 'text': message,
+                          'steps': steps})
+    response = client.calls([('load_instructions', identity),
+        ('send_message', {**identity, 'text': message, 'skipPolling': True})])[-1]
+    private_save(receipt, response)
+    run.update(status='WAITING_FOR_ASSESSMENT', reason='Authorized assessment execution requested.')
+    return True
+
+
 def configure_source_task(run, directory, client, identity, tasks):
     """Submit only the recorded upload to the known kickoff location form.
 
@@ -564,6 +605,8 @@ def assessment_step(run, directory, client=None):
         run['reason'] = 'AWS Transform requires a human task decision. Complete it in the authorized UI, then resume this run.'
     elif status in {'FAILED', 'STOPPED', 'CANCELLED'}:
         run['status'] = 'ASSESSMENT_FAILED'
+    elif start_assessment_plan(run, directory, client, identity, snapshot):
+        return
     elif bootstrap_assessment_plan(run, directory, client, identity, snapshot):
         return
     else:

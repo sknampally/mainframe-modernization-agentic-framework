@@ -18,6 +18,29 @@ import pilot
 
 
 class PreparationTests(unittest.TestCase):
+    def test_framework_upgrade_retains_assessment_and_audits_change(self):
+        self.project['framework_commit'] = 'b' * 40
+        directory = self.work / 'existing-run'
+        directory.mkdir()
+        run = {'framework_commit':'b'*40,'source':self.project['source'],
+               'job_id':'existing-job','create_pending':False,'events':[]}
+        app.write(directory/'run.json',run)
+        self.project['assessments']['run-a'] = {'directory':str(directory)}
+        result = app.upgrade_framework(self.work,self.project,argparse.Namespace(note='Fix execution checkpoint'))
+        updated = app.read(directory/'run.json')
+        self.assertEqual(updated['job_id'],'existing-job')
+        self.assertEqual(updated['framework_commit'],'a'*40)
+        self.assertEqual(updated['events'][-1]['from'],'b'*40)
+        self.assertEqual(result['status'],'FRAMEWORK_UPDATED')
+
+    def test_framework_upgrade_rejects_approved_or_dirty_project(self):
+        self.project['approvals']['assessment'] = {'sha256':'approved'}
+        with self.assertRaisesRegex(app.Blocked,'before assessment approval'):
+            app.upgrade_framework(self.work,self.project,argparse.Namespace(note='fix'))
+        self.project['approvals'].clear();self.dirty=True
+        with self.assertRaises(app.Blocked):
+            app.upgrade_framework(self.work,self.project,argparse.Namespace(note='fix'))
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

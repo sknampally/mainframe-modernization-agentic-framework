@@ -396,3 +396,19 @@ The mainframe connector adapter uses the service's mainframe S3 connector type a
 Connector creation and activation are distinct: a pending connector cannot be used
 to assess source. Service-side tool rejections are saved separately from transport
 errors for private troubleshooting and safe reconciliation.
+
+### Applying a controller fix during an assessment
+
+Stop the local watcher before updating Reframe; the AWS job remains intact. From a
+clean committed framework checkout, before any assessment approval, run:
+
+```bash
+modernize upgrade-framework --note "Describe the controller fix being applied"
+modernize resume --wait
+```
+
+This validates source integrity and records the old and new framework revisions in
+both project and run history. It preserves job identity, evidence and mutation
+receipts. It refuses upgrades after approval or while job creation is uncertain.
+It does not change the assessment scope or approve findings. A run with such an
+upgrade must disclose that it used multiple controller revisions.

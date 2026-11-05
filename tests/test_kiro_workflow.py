@@ -251,6 +251,48 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(run['plan_bootstrap']['attempts'],2)
         self.assertEqual(run['status'],'WAITING_FOR_HUMAN')
 
+    def execution_fixture(self):
+        run, snapshot, identity = self.onboarding()
+        run['settings']['allow_new_assessments'] = True
+        snapshot['plan']['steps'] = [{'stepName':name,'status':'NOT_STARTED'} for name in
+            ['Kick off modernization','Analyze code','Analyze data','Generate technical documentation','Extract business logic']]
+        snapshot['messages']['messages'][0]['text'] = 'The plan is ready. I can start the execution.'
+        return run, snapshot, identity
+
+    def test_execution_start_is_exact_and_receipted_once(self):
+        run, snapshot, identity = self.execution_fixture()
+        calls = []
+        class Client:
+            def calls(self, requests):
+                calls.extend(requests); return [{}, {'accepted':True}]
+        for _ in range(2):
+            self.assertTrue(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        self.assertEqual(sum(name == 'send_message' for name,_ in calls),1)
+        self.assertTrue((self.directory/'plan-execution-receipt.json').exists())
+
+    def test_execution_start_rejects_added_capability_and_uncertain_send(self):
+        run, snapshot, identity = self.execution_fixture()
+        class Client:
+            def calls(self, requests): raise flow.Blocked('lost response')
+        snapshot['plan']['steps'].append({'stepName':'Deploy','status':'NOT_STARTED'})
+        with self.assertRaisesRegex(flow.Blocked,'differs'):
+            flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot)
+        snapshot['plan']['steps'].pop()
+        with self.assertRaisesRegex(flow.Blocked,'lost response'):
+            flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot)
+        self.assertTrue(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        self.assertEqual(run['status'],'NEEDS_RECONCILIATION')
+
+    def test_execution_start_ignores_running_plan_and_unrecognized_chat(self):
+        run, snapshot, identity = self.execution_fixture()
+        class Client:
+            def calls(self, requests): raise AssertionError('No send expected')
+        snapshot['plan']['steps'][0]['status'] = 'EXECUTING'
+        self.assertFalse(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        snapshot['plan']['steps'][0]['status'] = 'NOT_STARTED'
+        snapshot['messages']['messages'][0]['text'] = 'Approve the generated findings'
+        self.assertFalse(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+
     def source_location_fixture(self):
         run=self.prepare_job();run['settings']['allow_new_assessments']=True
         archive=self.directory/'source.zip';archive.write_bytes(b'synthetic archive')

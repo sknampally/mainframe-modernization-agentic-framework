@@ -348,6 +348,34 @@ def verify_source(project):
     kw.source_ok(project)
 
 
+def upgrade_framework(work, project, args):
+    """Record a reviewed controller fix without replacing source, jobs or evidence."""
+    require(not project.get('approvals') and not project.get('pipeline'),
+            'Framework upgrades are supported only before assessment approval')
+    current = git(FRAMEWORK, 'rev-parse', 'HEAD')
+    # Validate the pinned source and clean current code before recording a new baseline.
+    verify_source({**project, 'framework_commit': current})
+    records = []
+    for item in project['assessments'].values():
+        path = Path(item['directory']) / 'run.json'
+        run = read(path)
+        require(not run.get('create_pending'), 'Reconcile uncertain job creation before upgrading')
+        verify_source({**run, 'framework_commit': current})
+        records.append((path, run))
+    def update(record):
+        previous = record['framework_commit']
+        if previous != current:
+            record.setdefault('events', []).append({'event':'framework_upgraded', 'at':time.time(),
+                'from':previous, 'to':current, 'reason':args.note})
+            record['framework_commit'] = current
+    for path, run in records:
+        update(run)
+        write(path, run)
+    update(project)
+    persist(work, project)
+    return {'status':'FRAMEWORK_UPDATED', 'revision':current, 'next_step':'modernize resume'}
+
+
 def assessment(work, project, args, client=None):
     label = name(args.label)
     if label not in project['assessments']:
@@ -848,6 +876,8 @@ def parser():
         a.add_argument('--detach', action='store_true')
         a.add_argument('--attach-job')
     commands.add_parser('status')
+    upgrade = commands.add_parser('upgrade-framework', help='Record a controller update before assessment approval; preserve jobs and evidence')
+    upgrade.add_argument('--note', required=True)
     scope = commands.add_parser('scope', help='Record explicit scope for an existing uploaded assessment')
     scope.add_argument('--label')
     scope.add_argument('--all-uploaded', action='store_true')
@@ -956,6 +986,7 @@ def main(argv=None, reporter=None):
                         result = package(work, project)
                     elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
+                    elif args.command == 'upgrade-framework': result = upgrade_framework(work, project, args)
                     elif args.command == 'setup': result = setup(work, project, args)
                     elif args.command == 'tasks': result = assessment_tasks(work, project, args)
                     elif args.command == 'scope': result = assessment_scope(work, project, args)
