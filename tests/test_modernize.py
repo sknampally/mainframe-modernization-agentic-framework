@@ -186,6 +186,26 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(pilot.Blocked, 'never creates'):
             app.assessment(self.work, self.project, self.args('resume', '--label', 'missing'))
 
+    def test_sealed_assessment_replaces_stale_wait_reason(self):
+        result = self.assess()
+        directory = Path(self.project['assessments']['a']['directory'])
+        run = app.read(directory/'run.json')
+        self.assertEqual(run['status'],'AWAITING_ASSESSMENT_APPROVAL')
+        self.assertIn('downloaded and sealed',run['reason'])
+
+    def test_assessment_review_index_escapes_content_and_does_not_approve(self):
+        self.assess()
+        directory = Path(self.project['assessments']['a']['directory'])
+        run = app.read(directory/'run.json'); run['objective'] = '<script>alert(1)</script>'
+        app.write(directory/'run.json',run)
+        result = app.assessment_report(self.work,self.project,argparse.Namespace(label='a'))
+        page = Path(result['report']).read_text()
+        self.assertIn('&lt;script&gt;',page)
+        self.assertNotIn('<script>',page)
+        self.assertIn('assessment/rules.json',page)
+        self.assertIn('Awaiting human review',page)
+        self.assertFalse(self.project['approvals'])
+
     def test_original_export_tamper_blocks_assessment_approval(self):
         self.assess()
         directory = Path(self.project['assessments']['a']['directory'])

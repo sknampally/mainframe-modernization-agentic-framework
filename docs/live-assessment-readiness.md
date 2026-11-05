@@ -69,3 +69,21 @@ the service trust relationship.
 Until these checks pass, describe live assessment automation as a POC under
 validation. Passing local tests does not establish live end-to-end acceptance,
 support for every mainframe dialect, or behavioral equivalence.
+
+## CardDemo live evidence — repaired run
+
+One full-upload CardDemo run reached `AWAITING_ASSESSMENT_APPROVAL` through Reframe.
+Kickoff and all four assessment capabilities reported `SUCCEEDED`. AWS's overall
+job remained `EXECUTING` with a non-blocking collaborator invitation, so the CLI
+recorded completion on the exact successful plan rather than claiming AWS closed
+the job. It downloaded 224 original files from 26 output folders and sealed 545
+text/provenance files. Original PDFs and ZIPs remain private; 202 binary files or
+archive members were not text-extracted. A private review index provides links to
+all original and extracted evidence. No assessment approval or agent validation
+was performed.
+
+This run required controller fixes, audited CLI upgrades, renewed browser SSO,
+and an explicit expansion-limit increase. It is evidence of repaired CLI operation,
+not uninterrupted acceptance from one release. Export retries currently enumerate
+and download again rather than reuse completed downloads. The second-repository,
+repeat-run comparison and live agent-phase acceptance checks remain open.

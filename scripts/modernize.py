@@ -434,6 +434,7 @@ def assessment(work, project, args, client=None):
             time.sleep(run['settings']['poll_seconds'])
         if run['assessment_ready']:
             run['status'] = 'AWAITING_ASSESSMENT_APPROVAL'
+            run['reason'] = 'Assessment outputs downloaded and sealed; human review is required before validation.'
             project['assessments'][label]['sha256'] = digest(run['assessment_index'])
             project['stage'] = run['status'] if not project.get('selected') else project['stage']
     except Exception:
@@ -459,6 +460,49 @@ def verified_assessment(project, label):
                 and original.resolve().is_relative_to(directory.resolve()) and sha(original) == item['sha256'],
                 'Original assessment artifact changed or is missing')
     return directory, run
+
+
+def assessment_report(work, project, args):
+    """Build a private, inert index of the sealed assessment evidence."""
+    from urllib.parse import quote
+    label = args.label or project.get('active_assessment')
+    require(label in project['assessments'], 'Select an existing assessment')
+    directory, run = verified_assessment(project, label)
+    def link(relative, title):
+        require(kw.safe_name(relative), 'Unsafe review index path')
+        return '<a href="' + html.escape(quote(relative, safe='/'), quote=True) + '">' + html.escape(title) + '</a>'
+    rows = []
+    for item in run.get('assessment_originals', []):
+        source = item.get('source', {})
+        title = source.get('assetKey') or source.get('artifactId') or item['file']
+        rows.append('<tr><td>' + link(item['file'], title) + '</td><td>' + str(item.get('bytes', 0))
+                    + '</td><td>' + html.escape(item['sha256']) + '</td><td>'
+                    + str(item.get('binary_files_not_text_extracted', 0)) + '</td></tr>')
+    texts = ''.join('<li>' + link('assessment/' + item['path'], item['path']) + '</li>'
+                    for item in run['assessment_index'])
+    completion = run.get('assessment_completion', {})
+    page = ('<!doctype html><html lang="en"><meta charset="utf-8">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Reframe assessment review</title>'
+        '<style>body{font:16px system-ui;margin:40px auto;padding:0 24px;max-width:1200px;color:#17243b}'
+        'h1,h2{color:#123d69}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #ccd4df;padding:10px;text-align:left;overflow-wrap:anywhere}'
+        '.notice{background:#fff4dc;padding:20px;border-left:4px solid #b87900}code{overflow-wrap:anywhere}a{color:#145dad}</style>'
+        '<h1>Assessment evidence review</h1><p class="notice">Awaiting human review. AWS output is evidence to examine, not proof of correctness or runtime equivalence. No Claude validation or implementation has been approved by this report.</p>'
+        '<h2>Recorded scope</h2><p>' + html.escape(run['objective']) + '</p><p>Source revision: <code>'
+        + html.escape(run['source']['commit']) + '</code></p><p>Completion basis: '
+        + html.escape(completion.get('basis', 'Imported findings; provenance requires confirmation'))
+        + '. AWS job status at retrieval: ' + html.escape(completion.get('service_job_status', 'not applicable')) + '.</p>'
+        '<h2>Review before approving</h2><ol><li>Confirm the source revision, upload coverage and assessment scope.</li>'
+        '<li>Inspect missing inputs, analysis warnings, documentation and business-rule outputs.</li>'
+        '<li>Review original PDFs and archives; binary files listed below were retained but not text-extracted.</li>'
+        '<li>Record limitations and an accountable approval decision before starting validation.</li></ol>'
+        '<h2>Original AWS outputs</h2><p>' + str(len(rows)) + ' original files. Links stay within the private run directory.</p>'
+        '<table><tr><th>Output</th><th>Bytes</th><th>SHA-256</th><th>Binary members not text-extracted</th></tr>'
+        + ''.join(rows) + '</table><h2>Extracted review text and provenance</h2><ul>' + texts + '</ul></html>')
+    target = directory / 'assessment-review.html'
+    target.write_text(page); target.chmod(0o600)
+    return {'status':'ASSESSMENT_REVIEW_READY', 'report':str(target), 'label':label,
+            'next_step':'Review the evidence, then modernize approve assessment; this report grants no approval.'}
 
 
 def approved(project, phase, fingerprint):
@@ -889,6 +933,8 @@ def parser():
         a.add_argument('--detach', action='store_true')
         a.add_argument('--attach-job')
     commands.add_parser('status')
+    report = commands.add_parser('assessment-report', help='Generate a private HTML index of sealed assessment evidence')
+    report.add_argument('--label')
     upgrade = commands.add_parser('upgrade-framework', help='Record a controller update before assessment approval; preserve jobs and evidence')
     upgrade.add_argument('--note', required=True)
     scope = commands.add_parser('scope', help='Record explicit scope for an existing uploaded assessment')
@@ -999,6 +1045,7 @@ def main(argv=None, reporter=None):
                         result = package(work, project)
                     elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
+                    elif args.command == 'assessment-report': result = assessment_report(work, project, args)
                     elif args.command == 'upgrade-framework': result = upgrade_framework(work, project, args)
                     elif args.command == 'setup': result = setup(work, project, args)
                     elif args.command == 'tasks': result = assessment_tasks(work, project, args)

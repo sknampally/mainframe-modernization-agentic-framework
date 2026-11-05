@@ -431,3 +431,13 @@ modernize resume --max-assessment-bytes 100000000 --wait
 The limit change is recorded. The maximum accepted value is 250000000 bytes;
 download totals, archive expansion and collected text are each bounded. This does
 not increase model context limits or approve any findings.
+
+After the assessment is sealed, generate a private review index:
+
+```bash
+modernize assessment-report
+```
+
+Open the returned `assessment-review.html` locally. It links to original outputs
+and extracted text, displays the recorded scope and completion basis, and lists
+review checks. It does not approve the findings or start agent validation.

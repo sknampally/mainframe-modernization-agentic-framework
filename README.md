@@ -6,8 +6,9 @@ A CLI for taking pinned mainframe source through assessment, independent validat
 business review, and an approved implementation preparation package. C#/.NET on AWS
 is an intended target; target design remains an explicit architecture decision.
 
-**Status: four-phase POC implemented and tested with offline fixtures. Live AWS and
-agent-provider acceptance is pending.** No application buildout, deployment, data
+**Status: four-phase POC tested with offline fixtures. One repaired CardDemo AWS
+assessment reached the human review gate; uninterrupted release acceptance and
+live agent-provider acceptance remain pending.** No application buildout, deployment, data
 migration or runtime equivalence is claimed. AI assistance is used to develop this
 framework and to prepare candidate artifacts; humans retain approval authority.
 
@@ -47,7 +48,7 @@ Generated documentation is useful input, but it does not prove business behavior
 
 | Capability | Evidence status | Public repository status |
 | --- | --- | --- |
-| AWS Transform assessment | Setup/job adapters tested with fixtures; live acceptance pending | S3 ZIP or GitHub/local source, chosen S3 destination, workspace/connector setup, existing local/S3 findings, wait/resume |
+| AWS Transform assessment | One repaired CardDemo run reached sealed evidence review; uninterrupted acceptance pending | S3 ZIP or GitHub/local source, chosen S3 destination, workspace/connector setup, existing local/S3 findings, wait/resume |
 | Independent validation | Structural checks and synthetic handoff verified | Claude Sonnet executor plus Claude Opus reviewer independently request source and findings; distinct pinned model IDs, bounded rework |
 | Approval gates | Hash invalidation tested | Separate assessment, SME/architect and business specification gates |
 | HTML business review | Deterministic rendering and escaping tested | Claude/Codex-generated screen content; inert HTML with rules, states and specifications |
