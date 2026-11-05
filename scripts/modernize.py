@@ -350,8 +350,13 @@ def verify_source(project):
 
 def upgrade_framework(work, project, args):
     """Record a reviewed controller fix without replacing source, jobs or evidence."""
-    require(not project.get('approvals') and not project.get('pipeline'),
-            'Framework upgrades are supported only before assessment approval')
+    require(not (set(project.get('approvals', {})) - {'assessment'}) and not project.get('specification')
+            and not project.get('pipeline', {}).get('candidate_sha256'),
+            'Framework upgrades require no candidate or downstream approvals')
+    if project.get('approvals', {}).get('assessment'):
+        require(project.get('selected') in project['assessments'], 'Approved assessment identity is missing')
+        verified_assessment(project, project['selected'])
+        approved(project, 'assessment', project['assessments'][project['selected']]['sha256'])
     current = git(FRAMEWORK, 'rev-parse', 'HEAD')
     # Validate the pinned source and clean current code before recording a new baseline.
     verify_source({**project, 'framework_commit': current})
@@ -655,6 +660,42 @@ def decision(work, project, args):
     return {'status': project['stage']}
 
 
+def assessment_catalog(run):
+    """Expose useful labels without flooding model context with evidence hashes."""
+    mapped = {}
+    for original in run.get('assessment_originals', []):
+        key = original.get('source', {}).get('assetKey', '')
+        for text in original.get('text_files', []):
+            mapped[text['file']] = (key, text.get('member', ''))
+    result = []
+    for item in run['assessment_index']:
+        key, member = mapped.get(item['path'], ('', item['path']))
+        if '/logs/' in key or member.lower().endswith('.log') or item['path'] == 'original-artifacts.json':
+            continue
+        if member.lower().endswith('.html'):
+            continue  # matching structured rules remain available; originals are retained
+        result.append({'path':item['path'], 'bytes':item['bytes'],
+                       'label':member or Path(key).name or item['path']})
+    return result
+
+
+def bounded_preparation_context(context, limit):
+    """Retain recent verbatim reads; explicitly index older reads instead of silently truncating."""
+    context = dict(context)
+    original = context['history']
+    context['history'] = list(original)
+    omitted = []
+    while len(json.dumps(context).encode()) > limit and context['history']:
+        entry = context['history'].pop(0)
+        omitted.append({'request':entry['request'], 'files':[{'area':x['area'],'path':x['path']}
+                         for x in entry.get('response', [])]})
+        context['earlier_reads'] = omitted
+        context['context_notice'] = 'Earlier read bodies were omitted to fit the context limit. Their full receipts remain saved. Request exact ranges again when needed; omission is not evidence.'
+    message = json.dumps(context)
+    require(len(message.encode()) <= limit, 'Preparation catalog/candidate exceeds context limit')
+    return message
+
+
 def pipeline(work, project, args, runtime=model_call):
     verify_source(project)
     validate_model_pair(project['providers']['executor'], project['settings'])
@@ -676,17 +717,18 @@ def pipeline(work, project, args, runtime=model_call):
                    role_reads=state['reads'], events=[])
         context = {'protocol': (FRAMEWORK / 'prompts/pipeline' / (role + '.md')).read_text(),
             'scope': project['scope'], 'source': {k: v for k, v in project['source'].items() if k != 'root'},
-            'source_files': kw.inventory(run), 'assessment_files': assessment_run['assessment_index'],
+            'source_files': kw.inventory(run), 'assessment_files': assessment_catalog(assessment_run),
             'assessment_provenance': assessment_run.get('assessment_provenance'), 'history': history,
-            'feedback': project.get('feedback', []), 'decisions': project['decisions']}
+            'feedback': project.get('feedback', []), 'decisions': project['decisions'],
+            'remaining_model_calls': project['settings']['max_model_calls'] - state['calls'],
+            'working_notes': state.get('notes', {}).get(key, '')}
         if role == 'reviewer':
             candidate_path = area / f'candidate-{number}.json'
             require(sha(candidate_path) == state['candidate_sha256'], 'Candidate changed after handoff')
             context['candidate'] = read(candidate_path)
         if state.get('previous_review'):
             context['previous_review'] = state['previous_review']
-        message = json.dumps(context)
-        require(len(message.encode()) <= project['settings']['max_context_bytes'], 'Context limit reached; narrow the slice or adjust saved settings')
+        message = bounded_preparation_context(context, project['settings']['max_context_bytes'])
         state['calls'] += 1
         run['model_calls'] = state['calls']
         project['stage'] = 'RUNNING_' + role.upper()
@@ -694,8 +736,19 @@ def pipeline(work, project, args, runtime=model_call):
         reply = runtime(project['providers'][role], run, area, role, message)
         verify_source(project)
         write(area / f'reply-{state["calls"]}.json', reply)
+        if isinstance(reply.get('notes'), str):
+            require(len(reply['notes'].encode()) <= 12000, 'Working notes exceed 12000 bytes')
+            state.setdefault('notes', {})[key] = reply['notes']
         if reply.get('kind') == 'read':
-            history.append({'request': reply, 'response': kw.source_read(run, assessment_dir, role, reply)})
+            try:
+                chunks = kw.source_read(run, assessment_dir, role, reply)
+                history.append({'request':reply, 'response':chunks})
+            except Blocked as error:
+                if str(error) not in {'Read result exceeds byte budget; request fewer lines',
+                                      'Read ranges require positive start/end and at most 500 lines',
+                                      'Read request must name one to five paths'}:
+                    raise
+                history.append({'request':reply, 'response':[], 'read_error':str(error)})
             state['reads'] = run['role_reads']
         elif reply.get('kind') == 'blocked':
             state['status'], project['stage'] = 'BLOCKED', 'BLOCKED'
@@ -703,7 +756,7 @@ def pipeline(work, project, args, runtime=model_call):
             break
         elif role == 'executor' and reply.get('kind') == 'candidate':
             require(state['reads'].get(key), 'Executor must inspect source')
-            require(any(x['request'].get('area') == 'assessment' for x in history), 'Executor must inspect assessment findings')
+            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history), 'Executor must inspect assessment findings')
             validate_spec(reply.get('specification'), Path(project['source']['root']))
             read_paths = {chunk['path'] for entry in history for chunk in entry['response'] if chunk['area'] == 'source'}
             require({rule['source_path'] for rule in reply['specification']['rules']} <= read_paths,
@@ -713,7 +766,7 @@ def pipeline(work, project, args, runtime=model_call):
             state['role'] = 'reviewer'
         elif role == 'reviewer' and reply.get('kind') == 'review':
             require(state['reads'].get(key), 'Reviewer must independently inspect source')
-            require(any(x['request'].get('area') == 'assessment' for x in history), 'Reviewer must inspect assessment findings')
+            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history), 'Reviewer must inspect assessment findings')
             require(reply.get('decision') in {'PASS', 'REWORK', 'BLOCKED'} and isinstance(reply.get('findings'), list)
                     and isinstance(reply.get('report'), str) and reply['report'].strip(), 'Invalid reviewer decision')
             write(area / f'review-{number}.json', reply)
@@ -1001,7 +1054,7 @@ def parser():
     commands.add_parser('status')
     report = commands.add_parser('assessment-report', help='Generate a private HTML index of sealed assessment evidence')
     report.add_argument('--label')
-    upgrade = commands.add_parser('upgrade-framework', help='Record a controller update before assessment approval; preserve jobs and evidence')
+    upgrade = commands.add_parser('upgrade-framework', help='Record a controller update before candidate handoff; preserve approved evidence')
     upgrade.add_argument('--note', required=True)
     scope = commands.add_parser('scope', help='Record explicit scope for an existing uploaded assessment')
     scope.add_argument('--label')

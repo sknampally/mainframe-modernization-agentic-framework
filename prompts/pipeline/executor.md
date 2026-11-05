@@ -45,3 +45,12 @@ production changes or pretend that application code has already been built.
 An SME answer is a recorded decision, not new source evidence. Deferred decisions
 must retain blocked downstream scope. Apply prior reviewer/user feedback; preserve
 traceability and distinguish source behavior from proposed target behavior.
+
+Assessment inventory labels identify original AWS reports. Prefer inventories,
+missing dependencies, issue reports, structured business rules and relevant source;
+do not spend calls reading operational logs. The controller may omit older read
+bodies with an explicit earlier_reads index. Include optional `notes` (at most
+12000 UTF-8 bytes) in each reply to retain concise working observations and exact
+source anchors. Notes are your own claims, not new evidence; reread any needed
+ranges. Use remaining_model_calls to reserve enough calls for independent review.
+Do not silently narrow the controller's selected scope to a single journey.

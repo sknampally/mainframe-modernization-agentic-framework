@@ -18,6 +18,31 @@ import pilot
 
 
 class PreparationTests(unittest.TestCase):
+    def test_preparation_context_compacts_without_mutating_read_receipts(self):
+        history = [{'request':{'area':'source','paths':[str(n)]}, 'response':[
+            {'area':'source','path':str(n),'text':str(n)*2000}]} for n in range(3)]
+        original = copy.deepcopy(history)
+        message = app.bounded_preparation_context({'history':history,'working_notes':'Claim to verify'},3500)
+        decoded = json.loads(message)
+        self.assertLessEqual(len(message.encode()),3500)
+        self.assertEqual(history,original)
+        self.assertIn('earlier_reads',decoded)
+        self.assertEqual(decoded['history'][-1]['response'][0]['path'],'2')
+
+    def test_assessment_catalog_names_evidence_and_omits_logs(self):
+        run = {'assessment_index':[{'path':'a.txt','bytes':10},{'path':'b.txt','bytes':20}],
+               'assessment_originals':[{'source':{'assetKey':'job/logs/run.log'},'text_files':[{'file':'a.txt','member':'run.log'}]},
+                {'source':{'assetKey':'job/results/rules.zip'},'text_files':[{'file':'b.txt','member':'program/rules.json'}]}]}
+        self.assertEqual(app.assessment_catalog(run),[{'path':'b.txt','bytes':20,'label':'program/rules.json'}])
+
+    def test_controller_upgrade_preserves_verified_assessment_approval(self):
+        self.baseline()
+        before = copy.deepcopy(self.project['approvals'])
+        self.project['pipeline'] = {'calls':2,'contexts':{'executor':[]}}
+        app.upgrade_framework(self.work,self.project,argparse.Namespace(note='Controller fix'))
+        self.assertEqual(self.project['approvals'],before)
+        self.assertEqual(self.project['pipeline']['calls'],2)
+
     def test_framework_upgrade_retains_assessment_and_audits_change(self):
         self.project['framework_commit'] = 'b' * 40
         directory = self.work / 'existing-run'
@@ -35,7 +60,7 @@ class PreparationTests(unittest.TestCase):
 
     def test_framework_upgrade_rejects_approved_or_dirty_project(self):
         self.project['approvals']['assessment'] = {'sha256':'approved'}
-        with self.assertRaisesRegex(app.Blocked,'before assessment approval'):
+        with self.assertRaises(app.Blocked):
             app.upgrade_framework(self.work,self.project,argparse.Namespace(note='fix'))
         self.project['approvals'].clear();self.dirty=True
         with self.assertRaises(app.Blocked):
