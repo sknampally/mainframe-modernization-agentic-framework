@@ -186,6 +186,20 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(pilot.Blocked, 'never creates'):
             app.assessment(self.work, self.project, self.args('resume', '--label', 'missing'))
 
+    def test_original_export_tamper_blocks_assessment_approval(self):
+        self.assess()
+        directory = Path(self.project['assessments']['a']['directory'])
+        original = directory / 'original.zip'
+        original.write_bytes(b'original archive bytes')
+        run = app.read(directory/'run.json')
+        run['assessment_originals'] = [{'file':'original.zip','sha256':app.sha(original)}]
+        app.write(directory/'run.json',run)
+        app.verified_assessment(self.project,'a')
+        original.write_bytes(b'changed archive bytes')
+        with self.assertRaisesRegex(app.Blocked,'Original assessment artifact changed'):
+            self.approve('assessment','--label','a','--confirm-source-match')
+        self.assertFalse(self.project['approvals'])
+
     def test_immutable_assessment_tamper_blocks(self):
         self.baseline()
         directory = Path(self.project['assessments']['a']['directory'])
