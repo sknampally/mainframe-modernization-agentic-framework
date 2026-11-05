@@ -38,8 +38,13 @@ def private_save(path, value):
 
 def source_ok(run):
     root = Path(run['source']['root'])
-    require(git(root, 'rev-parse', 'HEAD') == run['source']['commit'], 'Pinned source commit changed')
-    require(not git(root, 'status', '--porcelain'), 'Source checkout is not clean')
+    if run['source'].get('kind') == 's3-zip':
+        require(git(root, 'write-tree') == run['source']['commit'], 'Pinned source tree changed')
+        require(not git(root, 'diff-files', '--name-only') and not git(root, 'ls-files', '--others'),
+                'S3 source snapshot changed')
+    else:
+        require(git(root, 'rev-parse', 'HEAD') == run['source']['commit'], 'Pinned source commit changed')
+        require(not git(root, 'status', '--porcelain'), 'Source checkout is not clean')
     require(git(root, 'remote', 'get-url', 'origin') == run['source']['repository'], 'Source origin changed')
     require(git(FRAMEWORK, 'rev-parse', 'HEAD') == run['framework_commit'], 'Framework revision changed')
     require(not git(FRAMEWORK, 'status', '--porcelain'), 'Framework checkout is not clean')
@@ -76,14 +81,16 @@ def initialize(args):
     require(source.is_dir() and workspace.is_dir(), 'Source and workspace must exist')
     require(not workspace.is_relative_to(source) and not workspace.is_relative_to(FRAMEWORK),
             'Run workspace must be outside source and framework checkouts')
-    require(not git(source, 'status', '--porcelain'), 'Source checkout is not clean')
+    supplied_source = getattr(args, 'source_record', None)
+    if not supplied_source or supplied_source.get('kind') != 's3-zip':
+        require(not git(source, 'status', '--porcelain'), 'Source checkout is not clean')
     require(not git(FRAMEWORK, 'status', '--porcelain'), 'Framework checkout is not clean')
     config = settings(args.settings)
     identity = 'RUN-' + uuid.uuid4().hex[:16]
     directory = workspace / 'runs' / identity
     directory.mkdir(parents=True, mode=0o700)
     run = {'version': 1, 'run_id': identity, 'framework_commit': git(FRAMEWORK, 'rev-parse', 'HEAD'),
-           'source': {'root': str(source), 'repository': git(source, 'remote', 'get-url', 'origin'),
+           'source': supplied_source or {'root': str(source), 'repository': git(source, 'remote', 'get-url', 'origin'),
                       'commit': git(source, 'rev-parse', 'HEAD')},
            'objective': args.objective, 'assessment_input': args.assessment,
            'settings': config, 'config_sha256': hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
@@ -261,36 +268,133 @@ def unwrap_mcp(value):
     raise Blocked('AWS response envelope nesting exceeded supported limit')
 
 
+def list_assessment_exports(directory, client, identity):
+    """Traverse only service-returned output folders belonging to this job."""
+    roots = (f"transform-output/{identity['jobId']}/",
+             f"AWSTransform/Workspaces/{identity['workspaceId']}/Jobs/{identity['jobId']}/")
+    queue, visited = [None], set()
+    merged = {'artifacts': [], 'assets': [], 'folders': []}
+    while queue:
+        prefix = queue.pop(0)
+        if prefix in visited:
+            continue
+        visited.add(prefix)
+        require(len(visited) <= 1000, 'Assessment folder traversal exceeds 1000 folders')
+        args = {**identity, 'resource':'artifacts'}
+        if prefix is not None:
+            args['pathPrefix'] = prefix
+        listing = client.calls([('load_instructions', identity), ('list_resources', args)])[-1]
+        private_save(directory / ('artifact-listing-' + hashlib.sha256(str(prefix).encode()).hexdigest() + '.json'), listing)
+        require(not listing.get('nextToken'), 'Artifact listing has unresolved pagination')
+        merged['artifacts'].extend(listing.get('artifacts', listing.get('items', [])))
+        connector = listing.get('connectorId')
+        for asset in listing.get('assets', []):
+            require(isinstance(asset, dict) and isinstance(asset.get('assetKey'), str)
+                    and asset['assetKey'].startswith(roots) and safe_name(asset['assetKey']),
+                    'Returned asset is outside this job output')
+            merged['assets'].append({**asset, 'connectorId':connector})
+        require(len(merged['artifacts']) + len(merged['assets']) <= 10000, 'Assessment listing exceeds bounded inventory')
+        for folder in listing.get('folders', []):
+            require(isinstance(folder, str) and folder.startswith(roots) and folder.endswith('/')
+                    and safe_name(folder.rstrip('/')), 'Returned folder is outside this job output')
+            if folder not in visited and folder not in queue:
+                queue.append(folder)
+    merged['traversed_folders'] = sorted(p for p in visited if p is not None)
+    private_save(directory / 'artifact-listing.json', merged)
+    return merged
+
+
 def export_findings(run, directory, client, identity):
     """Retrieve server-returned artifact IDs/assets; do not guess an export path."""
     target = directory / 'transform-artifacts'
     target.mkdir(exist_ok=True, mode=0o700)
-    listing = client.calls([('load_instructions', identity),
-                           ('list_resources', {**identity, 'resource': 'artifacts'})])[-1]
-    private_save(directory / 'artifact-listing.json', listing)
-    requests = []
-    for item in listing.get('artifacts', []):
+    listing = list_assessment_exports(directory, client, identity)
+    listed_bytes = sum(item.get('sizeInBytes', 0) or 0 for item in listing['assets'] + listing['artifacts'])
+    require(listed_bytes <= run['settings']['max_assessment_bytes'],
+            'Listed assessment export exceeds byte limit; resume with --max-assessment-bytes')
+    requests, seen = [], set()
+    for item in listing.get('artifacts', listing.get('items', [])):
         if isinstance(item, dict) and item.get('artifactId'):
-            requests.append({'resource': 'artifact', 'artifactId': item['artifactId']})
+            key = ('artifact', item['artifactId'])
+            if key not in seen:
+                seen.add(key)
+                requests.append({'resource': 'artifact', 'artifactId': item['artifactId']})
     for item in listing.get('assets', []):
-        if isinstance(item, dict) and item.get('assetKey') and listing.get('connectorId'):
-            if Path(item['assetKey']).suffix.lower() in TEXT_SUFFIXES:
-                requests.append({'resource': 'asset', 'assetKey': item['assetKey'], 'connectorId': listing['connectorId']})
-    require(len(requests) <= 40, 'More than 40 top-level artifacts; configure a bounded output_location in saved settings')
+        require(isinstance(item, dict) and item.get('assetKey') and item.get('connectorId'),
+                'Asset export lacks identity or connector; findings cannot be sealed')
+        key = ('asset', item['assetKey'])
+        if key not in seen:
+            seen.add(key)
+            requests.append({'resource': 'asset', 'assetKey': item['assetKey'], 'connectorId': item['connectorId']})
+    require(len(requests) <= 1000, 'More than 1000 top-level artifacts; configure a bounded output_location in saved settings')
     require(requests, 'No downloadable top-level artifacts returned; configure output_location for nested/S3 exports')
-    calls = [('load_instructions', identity)]
-    for index, arguments in enumerate(requests):
-        calls.append(('get_resource', {**identity, **arguments, 'savePath': str(target), 'fileName': f'finding-{index}.txt'}))
-    client.calls(calls)
-    # Reject binary/archives instead of pretending a service-status snapshot is the assessment.
-    for path in target.glob('finding-*.txt'):
-        raw = path.read_bytes()
-        require(b'\0' not in raw, 'Binary artifact export requires an explicit text-output location')
-        try:
-            raw.decode('utf-8')
-        except UnicodeDecodeError as error:
-            raise Blocked('Non-UTF-8 artifact; configure a text-output location') from error
-    collect_assessment(run, directory, str(target))
+    # Bound each transport session; a large export must not share one 180-second timeout.
+    expected = []
+    for offset in range(0, len(requests), 10):
+        calls = [('load_instructions', identity)]
+        for index, arguments in enumerate(requests[offset:offset + 10], offset):
+            suffix = Path(arguments.get('assetKey', '')).suffix.lower()
+            suffix = suffix if suffix in TEXT_SUFFIXES | {'.zip', '.pdf', '.log', '.xml', '.html'} else '.txt'
+            filename = f'finding-{index}' + suffix
+            path = target / filename
+            # Never mistake an earlier failed download for a successful retry.
+            if path.exists():
+                path.unlink()
+            expected.append(path)
+            calls.append(('get_resource', {**identity, **arguments, 'savePath': str(target), 'fileName': filename}))
+        client.calls(calls)
+    limit = run['settings']['max_assessment_bytes']
+    total = 0
+    for path in expected:
+        require(path.is_file() and not path.is_symlink(), 'Artifact download did not produce every expected file')
+        total += path.stat().st_size
+        require(total <= limit, 'Assessment export exceeds byte limit; resume with --max-assessment-bytes')
+        path.chmod(0o600)
+    text_root = directory / 'export-text'
+    if text_root.exists():
+        shutil.rmtree(text_root)
+    text_root.mkdir(mode=0o700)
+    originals, expanded_total = [], 0
+    from modernize_source import extract_archive
+    for index, (path, request) in enumerate(zip(expected, requests)):
+        record = {'file': path.relative_to(directory).as_posix(), 'source':request,
+                  'sha256':sha(path), 'bytes':path.stat().st_size, 'text_files':[]}
+        candidates = [path]
+        is_zip = zipfile.is_zipfile(path)
+        require(path.suffix != '.zip' or is_zip, 'Downloaded ZIP is not a valid archive')
+        if is_zip:
+            extraction = directory / 'export-expanded' / str(index)
+            if extraction.exists():
+                shutil.rmtree(extraction)
+            extraction.parent.mkdir(exist_ok=True, mode=0o700)
+            with zipfile.ZipFile(path) as archive:
+                expanded_total += sum(item.file_size for item in archive.infolist())
+            require(expanded_total <= limit, 'Expanded assessment exceeds byte limit; resume with --max-assessment-bytes')
+            extract_archive(path, extraction, limit)
+            candidates = sorted(p for p in extraction.rglob('*') if p.is_file())
+        binary_count = 0
+        for number, candidate in enumerate(candidates):
+            raw = candidate.read_bytes()
+            if candidate.suffix.lower() == '.pdf' or raw.startswith(b'%PDF-'):
+                binary_count += 1
+                continue
+            try:
+                content = raw.decode('utf-8')
+                if b'\0' in raw: raise UnicodeDecodeError('utf-8',raw,0,1,'binary content')
+            except UnicodeDecodeError:
+                binary_count += 1
+                continue
+            filename = (path.name if len(candidates) == 1 and candidate == path and path.suffix in TEXT_SUFFIXES
+                        else f'finding-{index}-text-{number}.txt')
+            (text_root / filename).write_text(content)
+            record['text_files'].append({'file':filename, 'member':candidate.name if candidate == path else candidate.relative_to(extraction).as_posix()})
+        record['binary_files_not_text_extracted'] = binary_count
+        originals.append(record)
+    require(any(record['text_files'] for record in originals), 'No readable text in exported assessment')
+    private_save(text_root / 'original-artifacts.json', originals)
+    private_save(directory / 'artifact-download-index.json', originals)
+    collect_assessment(run, directory, str(text_root))
+    run['assessment_originals'] = originals
     run['assessment_provenance']['baseline_match'] = 'Job requested for this recorded source archive; ingestion and semantic content remain unverified'
 
 
@@ -370,8 +474,9 @@ def bootstrap_assessment_plan(run, directory, client, identity, snapshot):
         'Use the EXISTING job ' + identity['jobId'] + ' in workspace ' + identity['workspaceId'] +
         '. Do not create or switch jobs. Select option 3, custom ASSESSMENT-ONLY plan. '
         'Confirm these explicit capabilities: Analyze code; Analyze data (where supported inputs exist); '
-        'Generate technical documentation; Extract business logic; Decompose code (boundaries/seeds only); '
-        'Plan test cases (draft only). This capability selection is confirmed: generate the plan and proceed. '
+        'Generate technical documentation; Extract business logic. '
+        'Do not add Decompose code or Plan test cases: proposed boundaries and test specifications belong to the later independently reviewed preparation phase. '
+        'This capability selection is confirmed: generate the plan and proceed. '
         'Use existing active connector ' + connector + ' and source archive ' + source +
         '. Pinned source commit: ' + run['source']['commit'] + '. Scope: ' + run['objective'] +
         '. No application implementation, reimagination, deployment, new infrastructure or additional jobs. '
@@ -389,6 +494,56 @@ def bootstrap_assessment_plan(run, directory, client, identity, snapshot):
     run['status'] = 'WAITING_FOR_ASSESSMENT'
     run['reason'] = 'Assessment-only plan selection sent; resume to check the same job.'
     private_save(directory / 'run.json', run)
+    return True
+
+
+def assessment_plan_complete(snapshot):
+    """An optional invitation may keep the job open after every assessment step finishes."""
+    steps = snapshot.get('plan', {}).get('steps', [])
+    expected = {'Kick off modernization', 'Analyze code', 'Analyze data',
+                'Generate technical documentation', 'Extract business logic'}
+    return (len(steps) == len(expected) and {s.get('stepName') for s in steps} == expected
+            and all(s.get('status') == 'SUCCEEDED' for s in steps))
+
+
+def start_assessment_plan(run, directory, client, identity, snapshot):
+    """Start only the exact assessment plan already authorized by this run."""
+    steps = snapshot.get('plan', {}).get('steps', [])
+    expected = {'Kick off modernization', 'Analyze code', 'Analyze data',
+                'Generate technical documentation', 'Extract business logic'}
+    if not steps or any(step.get('status') != 'NOT_STARTED' for step in steps):
+        return False
+    messages = [m for m in snapshot.get('messages', {}).get('messages', [])
+                if m.get('messageOrigin') == 'SYSTEM'
+                and m.get('processingInfo', {}).get('messageType') == 'FINAL_RESPONSE']
+    if not messages:
+        return False
+    latest = max(messages, key=lambda m: str(m.get('createdAt', '')))
+    text = latest.get('text', '').lower()
+    if not ('plan' in text and 'ready' in text and 'start the execution' in text):
+        return False
+    require(run['settings'].get('allow_new_assessments'), 'Assessment execution is not authorized')
+    require(len(steps) == len(expected) and {s.get('stepName') for s in steps} == expected,
+            'Generated plan differs from the authorized assessment capabilities; inspect before starting')
+    intent = directory / 'plan-execution-intent.json'
+    receipt = directory / 'plan-execution-receipt.json'
+    if receipt.exists():
+        run.update(status='WAITING_FOR_ASSESSMENT', reason='Execution request receipted; waiting for AWS to start the plan.')
+        return True
+    if intent.exists():
+        run.update(status='NEEDS_RECONCILIATION', reason='Execution request outcome uncertain; reconcile before retrying.')
+        return True
+    message = ('Start execution of the existing assessment plan in this job now. '
+               'Use the already recorded connector and source archive. Execute only kickoff, '
+               'code analysis, data analysis, technical documentation and business-rule extraction. '
+               'Do not create another job, add capabilities, implement or deploy. '
+               'This starts the authorized assessment; final findings remain subject to human review.')
+    private_save(intent, {'identity': identity, 'reply_to': latest.get('messageId'), 'text': message,
+                          'steps': steps})
+    response = client.calls([('load_instructions', identity),
+        ('send_message', {**identity, 'text': message, 'skipPolling': True})])[-1]
+    private_save(receipt, response)
+    run.update(status='WAITING_FOR_ASSESSMENT', reason='Authorized assessment execution requested.')
     return True
 
 
@@ -506,10 +661,15 @@ def assessment_step(run, directory, client=None):
                                 capture_output=True, text=True, timeout=120)
         require(result.returncode == 0, 'Source upload failed; no assessment job was requested')
         run['uploaded_source'] = {'uri': source_uri, 'sha256': sha(archive)}
+        if config.get('assessment_policy') == 'full-upload':
+            run['assessment_scope_policy'] = {'mode':'ALL_UPLOADED',
+                'manifest_sha256':sha(directory / 'source-upload-manifest.json'),
+                'archive_sha256':sha(archive), 'findings_approval':'REQUIRED_BEFORE_VALIDATION'}
         arguments = {'workspaceId': config['workspace_id'], 'jobName': run['run_id'],
                      'objective': 'Assess the source archive at ' + source_uri + '. Source commit ' + run['source']['commit'] +
                                   '. Scope: ' + run['objective'] +
-                                  '. Produce discovery, documentation, rule candidates, data/dependency analysis and a draft test plan.',
+                                  '. Produce discovery, documentation, rule candidates and data/dependency analysis. '
+                                  'Do not add decomposition editing, test-plan refinement, code generation or deployment.',
                      'intent': config.get('intent', 'Assess this mainframe application; preserve required human review tasks.')}
         if config.get('orchestrator_agent'):
             arguments['orchestratorAgent'] = config['orchestrator_agent']
@@ -538,7 +698,9 @@ def assessment_step(run, directory, client=None):
     if pending or (not tasks and snapshot.get('_pollingGuidance', {}).get('hasPendingTasks') is True):
         run['status'] = 'WAITING_FOR_HUMAN'
         run['reason'] = 'AWS has a pending human task even though the overall job may still be executing. Complete the authorized task, then resume.'
-    elif status in {'COMPLETED', 'SUCCEEDED'}:
+    elif status in {'COMPLETED', 'SUCCEEDED'} or (status in {'EXECUTING', 'IN_PROGRESS', 'RUNNING'} and assessment_plan_complete(snapshot)):
+        run['assessment_completion'] = {'basis': 'terminal_job' if status in {'COMPLETED', 'SUCCEEDED'} else 'all_authorized_steps_succeeded',
+                                        'service_job_status': status}
         # Export paths vary by workflow. Ingest explicit configured output, never guess an artifact ID.
         output = config.get('output_location')
         if output:
@@ -551,6 +713,8 @@ def assessment_step(run, directory, client=None):
         run['reason'] = 'AWS Transform requires a human task decision. Complete it in the authorized UI, then resume this run.'
     elif status in {'FAILED', 'STOPPED', 'CANCELLED'}:
         run['status'] = 'ASSESSMENT_FAILED'
+    elif start_assessment_plan(run, directory, client, identity, snapshot):
+        return
     elif bootstrap_assessment_plan(run, directory, client, identity, snapshot):
         return
     else:

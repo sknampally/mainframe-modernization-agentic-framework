@@ -18,6 +18,29 @@ import pilot
 
 
 class PreparationTests(unittest.TestCase):
+    def test_framework_upgrade_retains_assessment_and_audits_change(self):
+        self.project['framework_commit'] = 'b' * 40
+        directory = self.work / 'existing-run'
+        directory.mkdir()
+        run = {'framework_commit':'b'*40,'source':self.project['source'],
+               'job_id':'existing-job','create_pending':False,'events':[]}
+        app.write(directory/'run.json',run)
+        self.project['assessments']['run-a'] = {'directory':str(directory)}
+        result = app.upgrade_framework(self.work,self.project,argparse.Namespace(note='Fix execution checkpoint'))
+        updated = app.read(directory/'run.json')
+        self.assertEqual(updated['job_id'],'existing-job')
+        self.assertEqual(updated['framework_commit'],'a'*40)
+        self.assertEqual(updated['events'][-1]['from'],'b'*40)
+        self.assertEqual(result['status'],'FRAMEWORK_UPDATED')
+
+    def test_framework_upgrade_rejects_approved_or_dirty_project(self):
+        self.project['approvals']['assessment'] = {'sha256':'approved'}
+        with self.assertRaisesRegex(app.Blocked,'before assessment approval'):
+            app.upgrade_framework(self.work,self.project,argparse.Namespace(note='fix'))
+        self.project['approvals'].clear();self.dirty=True
+        with self.assertRaises(app.Blocked):
+            app.upgrade_framework(self.work,self.project,argparse.Namespace(note='fix'))
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -68,7 +91,11 @@ class PreparationTests(unittest.TestCase):
     def screens(self):
         return {'screens': [{'id': 's1', 'title': 'Amount', 'purpose': 'Validate amount', 'rule_ids': ['R1'],
                             'fields': ['Amount'], 'actions': ['Submit'], 'states': ['Normal', 'Zero rejected'],
-                            'uncertainties': 'Runtime equivalence is unproven'}]}
+                            'uncertainties': 'Runtime equivalence is unproven'}],
+                'apis':[{'id':'validate-amount','method':'POST','path':'/amount/validate',
+                         'purpose':'Validate amount','authentication':'Proposed authenticated caller',
+                         'uncertainties':'No runtime parity proof','request':{'amount':'number'},
+                         'responses':{'200':'valid','422':'zero rejected'},'rule_ids':['R1']}]}
 
     def replies(self, review='PASS'):
         return [{'kind': 'read', 'area': 'source', 'paths': ['rule.cbl']},
@@ -104,12 +131,36 @@ class PreparationTests(unittest.TestCase):
         result = app.package(self.work, self.project)
         with zipfile.ZipFile(result['archive']) as archive:
             self.assertIn('ui-prompt.md', archive.namelist())
+            self.assertIn('AGENTS.md', archive.namelist())
+            self.assertIn('SKILL.md', archive.namelist())
+            self.assertEqual(json.loads(archive.read('ai-dlc.json'))['implementation_status'], 'NOT_STARTED')
             self.assertIn('infrastructure-prompt.md', archive.namelist())
             self.assertNotIn('project.json', archive.namelist())
             self.assertNotIn('source.zip', archive.namelist())
             self.assertTrue(all(not x.endswith(('.cs', '.tf')) for x in archive.namelist()))
             self.assertEqual(json.loads(archive.read('traceability.json'))['tests'][0]['status'], 'NOT RUN')
         self.assertEqual(self.project['stage'], 'PACKAGED')
+
+    def test_preparation_produces_html_before_human_validation(self):
+        self.validated()
+        report = self.project['preparation_report']
+        content = (self.work / report['path']).read_text()
+        self.assertIn('SME and architect review', content)
+        self.assertIn('Business rules', content)
+        self.assertEqual(report['specification'], self.project['specification']['sha256'])
+
+    def test_preparation_report_tamper_blocks_human_approval(self):
+        self.validated()
+        (self.work / self.project['preparation_report']['path']).write_text('changed')
+        with self.assertRaisesRegex(pilot.Blocked, 'Preparation report changed'):
+            self.approve('validation')
+
+    def test_preparation_report_tamper_after_approval_blocks_business_site(self):
+        self.validated()
+        self.approve('validation')
+        (self.work / self.project['preparation_report']['path']).write_text('changed')
+        with self.assertRaisesRegex(pilot.Blocked, 'Preparation report changed'):
+            app.review_site(self.work, self.project, self.args('review-site'), self.runtime([self.screens()]))
 
     def test_phase_one_stops_and_never_calls_agents(self):
         self.assertEqual(self.assess()['status'], 'AWAITING_ASSESSMENT_APPROVAL')
@@ -134,6 +185,20 @@ class PreparationTests(unittest.TestCase):
     def test_resume_unknown_label_never_creates(self):
         with self.assertRaisesRegex(pilot.Blocked, 'never creates'):
             app.assessment(self.work, self.project, self.args('resume', '--label', 'missing'))
+
+    def test_original_export_tamper_blocks_assessment_approval(self):
+        self.assess()
+        directory = Path(self.project['assessments']['a']['directory'])
+        original = directory / 'original.zip'
+        original.write_bytes(b'original archive bytes')
+        run = app.read(directory/'run.json')
+        run['assessment_originals'] = [{'file':'original.zip','sha256':app.sha(original)}]
+        app.write(directory/'run.json',run)
+        app.verified_assessment(self.project,'a')
+        original.write_bytes(b'changed archive bytes')
+        with self.assertRaisesRegex(app.Blocked,'Original assessment artifact changed'):
+            self.approve('assessment','--label','a','--confirm-source-match')
+        self.assertFalse(self.project['approvals'])
 
     def test_immutable_assessment_tamper_blocks(self):
         self.baseline()
@@ -219,6 +284,45 @@ class PreparationTests(unittest.TestCase):
         screens = self.screens(); screens['screens'][0]['rule_ids'] = ['invented']
         with self.assertRaisesRegex(pilot.Blocked, 'unknown rule'):
             artifacts.validate_screens(screens, self.spec())
+
+    def test_full_upload_rule_selection_is_bounded_and_receipted(self):
+        self.assess()
+        directory=Path(self.project['assessments']['a']['directory'])
+        manifest=directory/'source-upload-manifest.json'
+        app.write(manifest,{'included':[{'path':'rule.cbl'}]})
+        run=app.read(directory/'run.json')
+        run.update(job_id='fixture-job',assessment_scope_policy={'mode':'ALL_UPLOADED','manifest_sha256':pilot.sha(manifest)})
+        run['settings']['transform']['workspace_id']='fixture-workspace'
+        app.write(directory/'run.json',run)
+        task={'taskId':'fixture-task','uxComponentId':'MainframeBreInputComponent',
+              'jobMetadata':{'workspaceId':'fixture-workspace','jobId':'fixture-job'},
+              'status':'AWAITING_HUMAN_INPUT','_outputSchema':{
+                  'required':['reportScope','detailedLevel','userSelectedFiles'],
+                  'properties':{'reportScope':{'enum':['applicationLevel','fileLevel']}}}}
+        offered={'name':'rule.cbl','path':'rule.cbl','folderPath':'','fileType':'COB','charset':'UTF-8'}
+        calls=[]
+        class Client:
+            def calls(self,requests):
+                calls.extend(requests)
+                if requests[-1][0]=='get_job_status':return [{},{'tasks':{'hitlTasks':[task]}}]
+                if requests[-1][0]=='get_resource':return [{},{'task':task,'agentArtifactContent':{'properties':{'breInput':[offered]}}}]
+                return [{},{'status':'SUBMITTED'}]
+        for _ in range(2):app.assessment_tasks(self.work,self.project,self.args('tasks','--label','a','--configure-documentation'),Client())
+        submissions=[value for key,value in calls if key=='complete_task']
+        self.assertEqual(len(submissions),1)
+        content=json.loads(submissions[0]['content'])
+        self.assertEqual(content['reportScope'],'fileLevel')
+        self.assertTrue(content['detailedLevel'])
+        self.assertNotIn('charset',content['userSelectedFiles'][0])
+        offered['path']='outside.cbl'
+        with self.assertRaisesRegex(pilot.Blocked,'outside the upload'):
+            app.assessment_tasks(self.work,self.project,self.args('tasks','--label','a','--configure-documentation'),Client())
+
+    def test_api_unknown_rule_and_duplicate_operation_are_rejected(self):
+        screens=self.screens();screens['apis'][0]['rule_ids']=['invented']
+        with self.assertRaisesRegex(pilot.Blocked,'Unknown API rule'):artifacts.validate_screens(screens,self.spec())
+        screens=self.screens();screens['apis'].append(dict(screens['apis'][0]))
+        with self.assertRaisesRegex(pilot.Blocked,'Duplicate API'):artifacts.validate_screens(screens,self.spec())
 
     def test_test_execution_claim_is_rejected(self):
         spec = self.spec(); spec['tests'][0]['status'] = 'PASS'

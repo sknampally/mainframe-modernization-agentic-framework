@@ -76,6 +76,19 @@ def validate_spec(spec, source):
 def validate_screens(value, spec):
     require(isinstance(value, dict) and isinstance(value.get('screens'), list) and value['screens'], 'Screens required')
     rules = {r['id'] for r in spec['rules']}
+    require(isinstance(value.get('apis'), list), 'Structured API contracts required; use an empty list only when no APIs are proposed')
+    operations = set()
+    for api in value['apis']:
+        require(isinstance(api, dict) and all(text(api.get(key)) for key in
+                ('id','method','path','purpose','authentication','uncertainties')), 'Incomplete API contract')
+        require(api['method'] in {'GET','POST','PUT','PATCH','DELETE'} and api['path'].startswith('/')
+                and not api['path'].startswith('//'), 'API requires a relative route and supported method')
+        key = (api['method'],api['path'])
+        require(key not in operations, 'Duplicate API operation')
+        operations.add(key)
+        require(isinstance(api.get('request'), dict) and isinstance(api.get('responses'), dict)
+                and api['responses'], 'API request and response contracts required')
+        require(strings(api.get('rule_ids')) and set(api['rule_ids']) <= rules, 'Unknown API rule reference')
     ids = set()
     for screen in value['screens']:
         require(isinstance(screen, dict) and all(text(screen.get(k)) for k in ('id', 'title', 'purpose', 'uncertainties')),
@@ -92,14 +105,20 @@ def render_site(spec, screens, decisions, title='Modernization review'):
     """Never execute model-generated HTML, JavaScript, URLs or styles."""
     esc = lambda x: html.escape(str(x), quote=True)
     blocks = []
+    if screens['screens']:
+        blocks.append('<nav aria-label="Prototype screens"><h2>Application walkthrough</h2><ul>' +
+                      ''.join('<li><a href="#screen-' + str(index) + '">' + esc(screen['title']) + '</a></li>'
+                              for index, screen in enumerate(screens['screens'])) + '</ul></nav>')
     blocks.append('<h2>Scope</h2><p>' + esc(spec['scope']) + '</p><h3>Excluded</h3><p>' + esc(spec['excluded_scope']) + '</p>')
-    for screen in screens['screens']:
+    for index, screen in enumerate(screens['screens']):
         fields = ''.join('<label>' + esc(f) + '<input disabled placeholder="Illustrative only"></label>' for f in screen['fields'])
         actions = ''.join('<button disabled>' + esc(a) + '</button>' for a in screen['actions'])
-        blocks.append('<article><h2>' + esc(screen['title']) + '</h2><p>' + esc(screen['purpose']) + '</p>' + fields + actions +
+        blocks.append('<article id="screen-' + str(index) + '"><h2>' + esc(screen['title']) + '</h2><p>' + esc(screen['purpose']) + '</p>' + fields + actions +
                       '<p>Rules: ' + esc(', '.join(screen['rule_ids'])) + '</p><h3>States</h3><p>' + esc('; '.join(screen['states'])) +
                       '</p><h3>Uncertainties</h3><p>' + esc(screen['uncertainties']) + '</p></article>')
     blocks.append('<h2>Business rules</h2>')
+    if screens.get('apis'):
+        blocks.append('<h2>Proposed API contracts</h2><pre>' + esc(json.dumps(screens['apis'], indent=2)) + '</pre>')
     for r in spec['rules']:
         blocks.append('<article><h3>' + esc(r['id']) + ' · ' + esc(r['evidence_status']) + '</h3><p>' + esc(r['statement']) +
                       '</p><p>Evidence: ' + esc(r['source_path'] + ' ' + r['source_anchor']) + '</p></article>')

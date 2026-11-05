@@ -88,7 +88,7 @@ source-upload/job authorization. Approvals prompt for owner, rationale and sourc
 provenance confirmation; they are never inferred. Validation approval after SME
 questions remains an explicit gate before HTML generation.
 
-When a new job asks for its initial custom plan, the controller sends the six
+When a new job asks for its initial custom plan, the controller sends the four
 assessment capability names with the saved source, connector and scope. It records
 each message before sending and retains its receipt. Resume uses the same job;
 uncertain sends require reconciliation. Plan selection never approves generated
@@ -396,3 +396,38 @@ The mainframe connector adapter uses the service's mainframe S3 connector type a
 Connector creation and activation are distinct: a pending connector cannot be used
 to assess source. Service-side tool rejections are saved separately from transport
 errors for private troubleshooting and safe reconciliation.
+
+### Applying a controller fix during an assessment
+
+Stop the local watcher before updating Reframe; the AWS job remains intact. From a
+clean committed framework checkout, before any assessment approval, run:
+
+```bash
+modernize upgrade-framework --note "Describe the controller fix being applied"
+modernize resume --wait
+```
+
+This validates source integrity and records the old and new framework revisions in
+both project and run history. It preserves job identity, evidence and mutation
+receipts. It refuses upgrades after approval or while job creation is uncertain.
+It does not change the assessment scope or approve findings. A run with such an
+upgrade must disclose that it used multiple controller revisions.
+
+### Assessment exports
+
+Reframe traverses service-returned folders within the selected job output paths,
+downloads in bounded batches, and checks every expected file. Original ZIP/PDF
+and other assets stay private with source locations and SHA-256 hashes. ZIP text
+is extracted under path, file-count and expansion limits. Binary content that is
+not text-extracted is listed in `original-artifacts.json` for human review; it is
+not claimed as agent-readable evidence. Approval also checks original file hashes.
+
+For an export larger than the default local byte limit, explicitly increase it:
+
+```bash
+modernize resume --max-assessment-bytes 100000000 --wait
+```
+
+The limit change is recorded. The maximum accepted value is 250000000 bytes;
+download totals, archive expansion and collected text are each bounded. This does
+not increase model context limits or approve any findings.

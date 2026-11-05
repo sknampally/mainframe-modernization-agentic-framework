@@ -17,7 +17,7 @@ has passed an unattended assessment. This checklist records that distinction.
 | AWS asks to repeat capability selection | Send the full named capability set with existing job/source context; maximum two distinct onboarding responses | Bounded attempts, private intent/receipt and uncertain-send reconciliation tests |
 | Kickoff asks for the already uploaded source location | Submit only the recorded ZIP URI to the recognized source-location task after checking its identity, schema and local archive checksum | Offline submission/resume tests; no change to optional chat/features or other task types |
 | Non-blocking collaborator invitation remains open | Leave the invitation untouched and continue assessment polling | Offline regression test; blocking approvals still pause |
-| Job reports EXECUTING while a human task is pending | Pause for the task; never infer generated-deliverable approval | Offline regression tests |
+| Job reports EXECUTING while a task is pending | Handle recognized routine checkpoints under the saved full-upload policy; pause on unknown decisions | Schema and upload-manifest checks; final findings approval remains separate |
 | Tool reports failure inside a successful transport envelope | Save the raw tool response privately before returning an error | Local diagnostics; raw responses are never public evidence |
 
 Plan selection sends no source-derived instructions to the job agent: the message
@@ -25,6 +25,19 @@ is constructed from the user's saved scope and pinned run configuration. Unknown
 chat prompts do not authorize additional actions. Existing plans are not recreated.
 An interrupted message with no successful receipt requires reconciliation; resume
 does not blindly resend it or create a new job.
+
+## Assessment transport and scope
+
+The mainframe adapter uses the AWS Transform MCP server. The separately documented
+`atx` CLI serves AWS Transform custom and continuous modernization; equivalent
+specialized mainframe job control has not been verified. It is not a required
+installation or a replacement for this adapter. See the [AWS CLI getting-started
+guide](https://docs.aws.amazon.com/transform/latest/userguide/custom-get-started.html).
+
+The default assessment requests code analysis, data analysis, technical documentation
+and business-rule extraction. It excludes decomposition editing and test-plan
+refinement. Proposed application boundaries and test specifications belong to the
+subsequent preparation phase and its SME/architect review.
 
 ## Administrator boundary
 

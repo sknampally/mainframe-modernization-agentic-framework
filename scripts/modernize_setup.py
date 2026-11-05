@@ -259,8 +259,14 @@ def refresh_unstarted_baseline(work, project):
     require(not project.get('assessments') and not project.get('approvals') and not project.get('pipeline'),
             'An assessment/evidence baseline exists. Use its pinned framework checkout or initialize a new private workspace.')
     require(not app.git(app.FRAMEWORK, 'status', '--porcelain'), 'Framework checkout must be clean')
-    require(app.git(Path(project['source']['root']), 'rev-parse', 'HEAD') == project['source']['commit'], 'Pinned source changed')
-    require(not app.git(Path(project['source']['root']), 'status', '--porcelain'), 'Source checkout must be clean')
+    if project['source'].get('kind') == 's3-zip':
+        source = Path(project['source']['root'])
+        require(app.git(source, 'write-tree') == project['source']['commit']
+                and not app.git(source, 'diff-files', '--name-only')
+                and not app.git(source, 'ls-files', '--others'), 'Pinned S3 source changed')
+    else:
+        require(app.git(Path(project['source']['root']), 'rev-parse', 'HEAD') == project['source']['commit'], 'Pinned source changed')
+        require(not app.git(Path(project['source']['root']), 'status', '--porcelain'), 'Source checkout must be clean')
     print('The framework was updated after initial setup; no assessments or approvals exist yet.')
     require(yes('Use the current framework revision for this not-yet-started experiment?'),
             'Framework revision unchanged. Use the earlier checkout or initialize a new workspace.')
@@ -292,7 +298,7 @@ def prepare_command(args, work, project):
         if getattr(args, 'source', None):
             source = args.source
             matches = source.rstrip('/').removesuffix('.git') == project['source']['repository'].rstrip('/').removesuffix('.git')
-            if not source.startswith('https://'): matches = str(Path(source).expanduser().resolve()) == project['source']['root']
+            if not source.startswith(('https://', 's3://')): matches = str(Path(source).expanduser().resolve()) == project['source']['root']
             require(matches, 'Source differs from setup. Use modernize init with a new workspace to pin different source')
         if not args.label:
             if args.command == 'resume':

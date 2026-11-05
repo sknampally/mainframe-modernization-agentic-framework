@@ -6,6 +6,7 @@ import io
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -251,6 +252,63 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(run['plan_bootstrap']['attempts'],2)
         self.assertEqual(run['status'],'WAITING_FOR_HUMAN')
 
+    def execution_fixture(self):
+        run, snapshot, identity = self.onboarding()
+        run['settings']['allow_new_assessments'] = True
+        snapshot['plan']['steps'] = [{'stepName':name,'status':'NOT_STARTED'} for name in
+            ['Kick off modernization','Analyze code','Analyze data','Generate technical documentation','Extract business logic']]
+        snapshot['messages']['messages'][0]['text'] = 'The plan is ready. I can start the execution.'
+        return run, snapshot, identity
+
+    def test_completed_assessment_plan_exports_while_optional_invitation_remains(self):
+        run, snapshot, identity = self.execution_fixture()
+        for step in snapshot['plan']['steps']: step['status'] = 'SUCCEEDED'
+        self.assertTrue(flow.assessment_plan_complete(snapshot))
+        snapshot.update(job={'jobId':'fixture-job','status':'EXECUTING'}, tasks={'hitlTasks':[
+            {'status':'AWAITING_HUMAN_INPUT','blockingType':'NON_BLOCKING'}]})
+        class Client:
+            def calls(self, requests): return [{},snapshot]
+        with patch.object(flow,'export_findings') as export:
+            flow.assessment_step(run,self.directory,Client())
+            export.assert_called_once()
+        self.assertEqual(run['assessment_completion']['service_job_status'],'EXECUTING')
+        snapshot['plan']['steps'].pop()
+        self.assertFalse(flow.assessment_plan_complete(snapshot))
+
+    def test_execution_start_is_exact_and_receipted_once(self):
+        run, snapshot, identity = self.execution_fixture()
+        calls = []
+        class Client:
+            def calls(self, requests):
+                calls.extend(requests); return [{}, {'accepted':True}]
+        for _ in range(2):
+            self.assertTrue(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        self.assertEqual(sum(name == 'send_message' for name,_ in calls),1)
+        self.assertTrue((self.directory/'plan-execution-receipt.json').exists())
+
+    def test_execution_start_rejects_added_capability_and_uncertain_send(self):
+        run, snapshot, identity = self.execution_fixture()
+        class Client:
+            def calls(self, requests): raise flow.Blocked('lost response')
+        snapshot['plan']['steps'].append({'stepName':'Deploy','status':'NOT_STARTED'})
+        with self.assertRaisesRegex(flow.Blocked,'differs'):
+            flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot)
+        snapshot['plan']['steps'].pop()
+        with self.assertRaisesRegex(flow.Blocked,'lost response'):
+            flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot)
+        self.assertTrue(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        self.assertEqual(run['status'],'NEEDS_RECONCILIATION')
+
+    def test_execution_start_ignores_running_plan_and_unrecognized_chat(self):
+        run, snapshot, identity = self.execution_fixture()
+        class Client:
+            def calls(self, requests): raise AssertionError('No send expected')
+        snapshot['plan']['steps'][0]['status'] = 'EXECUTING'
+        self.assertFalse(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+        snapshot['plan']['steps'][0]['status'] = 'NOT_STARTED'
+        snapshot['messages']['messages'][0]['text'] = 'Approve the generated findings'
+        self.assertFalse(flow.start_assessment_plan(run,self.directory,Client(),identity,snapshot))
+
     def source_location_fixture(self):
         run=self.prepare_job();run['settings']['allow_new_assessments']=True
         archive=self.directory/'source.zip';archive.write_bytes(b'synthetic archive')
@@ -476,6 +534,83 @@ class WorkflowTests(unittest.TestCase):
             runtime=self.scripted([self.read(),self.candidate(),self.read(),self.review()]))
         self.assertEqual(result['status'], 'AWAITING_HUMAN_ACCEPTANCE')
         self.assertTrue((self.directory / 'assessment/finding-0.txt').is_file())
+
+    def test_export_listing_traverses_returned_job_folders_and_rejects_escape(self):
+        seen = []
+        class Client:
+            escape = False
+            def calls(self, requests):
+                args = requests[-1][1]; prefix = args.get('pathPrefix'); seen.append(prefix)
+                if prefix is None:
+                    return [{}, {'folders':['transform-output/fixture/docs/']}]
+                return [{}, {'connectorId':'fixture-connector','folders':['transform-output/fixture/docs/'],
+                             'assets':[{'assetKey': 'another-job/secrets.json' if self.escape else prefix+'rules.json'}]}]
+        client = Client()
+        result = flow.list_assessment_exports(self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertEqual(seen,[None,'transform-output/fixture/docs/'])
+        self.assertEqual(len(result['assets']),1)
+        client.escape = True
+        with self.assertRaisesRegex(flow.Blocked,'outside this job'):
+            flow.list_assessment_exports(self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+
+    def test_export_deduplicates_and_batches_complete_downloads(self):
+        run = self.prepare_job(); batches = []
+        class Client:
+            def calls(self, requests):
+                if any(name == 'list_resources' for name,_ in requests):
+                    return [{}, {'artifacts':[{'artifactId':str(i)} for i in range(21)] + [{'artifactId':'0'}]}]
+                downloads = [args for name,args in requests if name == 'get_resource']
+                batches.append(len(downloads))
+                for args in downloads:
+                    (Path(args['savePath'])/args['fileName']).write_text('finding')
+                return [{} for _ in requests]
+        flow.export_findings(run,self.directory,Client(),{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertEqual(batches,[10,10,1])
+        self.assertEqual(len(run['assessment_index']),22)
+        self.assertEqual(len(run['assessment_originals']),21)
+
+    def test_export_preserves_binary_originals_and_extracts_zip_text(self):
+        run = self.prepare_job()
+        class Client:
+            def calls(self, requests):
+                if any(name == 'list_resources' for name,_ in requests):
+                    return [{}, {'connectorId':'fixture-connector', 'assets':[
+                        {'assetKey':'transform-output/fixture/report.zip'},
+                        {'assetKey':'transform-output/fixture/report.pdf'}]}]
+                for name,args in requests:
+                    if name != 'get_resource': continue
+                    dest = Path(args['savePath'])/args['fileName']
+                    if args['assetKey'].endswith('.zip'):
+                        with zipfile.ZipFile(dest,'w') as z:
+                            z.writestr('rules/rule.json','{"rule":"reject empty"}')
+                            z.writestr('report.pdf',b'%PDF-1.7\x00\xff')
+                    else: dest.write_bytes(b'%PDF-1.7\x00\xff')
+                return [{} for _ in requests]
+        flow.export_findings(run,self.directory,Client(),{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertTrue(run['assessment_ready'])
+        self.assertEqual(len(run['assessment_originals']),2)
+        self.assertEqual(sum(x['binary_files_not_text_extracted'] for x in run['assessment_originals']),2)
+        self.assertEqual(len(run['assessment_originals'][0]['text_files']),1)
+        for item in run['assessment_originals']:
+            self.assertEqual(flow.sha(self.directory/item['file']),item['sha256'])
+        self.assertTrue((self.directory/'assessment/original-artifacts.json').exists())
+
+    def test_export_missing_file_or_nested_results_cannot_be_sealed(self):
+        run = self.prepare_job()
+        class Client:
+            folders = []
+            def calls(self, requests):
+                if any(name == 'list_resources' for name,_ in requests):
+                    return [{}, {'artifacts':[{'artifactId':'fixture'}], 'folders':self.folders}]
+                return [{} for _ in requests]
+        client = Client()
+        with self.assertRaisesRegex(flow.Blocked,'every expected file'):
+            flow.export_findings(run,self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertFalse(run['assessment_ready'])
+        client.folders = ['nested/']
+        with self.assertRaisesRegex(flow.Blocked,'outside this job'):
+            flow.export_findings(run,self.directory,client,{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertFalse(run['assessment_ready'])
 
     def test_model_subprocess_timeout_is_terminated_and_resumable(self):
         run = self.load(); run['model_calls'] = 1
