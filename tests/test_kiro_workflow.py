@@ -6,6 +6,7 @@ import io
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -565,7 +566,34 @@ class WorkflowTests(unittest.TestCase):
                 return [{} for _ in requests]
         flow.export_findings(run,self.directory,Client(),{'jobId':'fixture','workspaceId':'fixture'})
         self.assertEqual(batches,[10,10,1])
-        self.assertEqual(len(run['assessment_index']),21)
+        self.assertEqual(len(run['assessment_index']),22)
+        self.assertEqual(len(run['assessment_originals']),21)
+
+    def test_export_preserves_binary_originals_and_extracts_zip_text(self):
+        run = self.prepare_job()
+        class Client:
+            def calls(self, requests):
+                if any(name == 'list_resources' for name,_ in requests):
+                    return [{}, {'connectorId':'fixture-connector', 'assets':[
+                        {'assetKey':'transform-output/fixture/report.zip'},
+                        {'assetKey':'transform-output/fixture/report.pdf'}]}]
+                for name,args in requests:
+                    if name != 'get_resource': continue
+                    dest = Path(args['savePath'])/args['fileName']
+                    if args['assetKey'].endswith('.zip'):
+                        with zipfile.ZipFile(dest,'w') as z:
+                            z.writestr('rules/rule.json','{"rule":"reject empty"}')
+                            z.writestr('report.pdf',b'%PDF-1.7\x00\xff')
+                    else: dest.write_bytes(b'%PDF-1.7\x00\xff')
+                return [{} for _ in requests]
+        flow.export_findings(run,self.directory,Client(),{'jobId':'fixture','workspaceId':'fixture'})
+        self.assertTrue(run['assessment_ready'])
+        self.assertEqual(len(run['assessment_originals']),2)
+        self.assertEqual(sum(x['binary_files_not_text_extracted'] for x in run['assessment_originals']),2)
+        self.assertEqual(len(run['assessment_originals'][0]['text_files']),1)
+        for item in run['assessment_originals']:
+            self.assertEqual(flow.sha(self.directory/item['file']),item['sha256'])
+        self.assertTrue((self.directory/'assessment/original-artifacts.json').exists())
 
     def test_export_missing_file_or_nested_results_cannot_be_sealed(self):
         run = self.prepare_job()

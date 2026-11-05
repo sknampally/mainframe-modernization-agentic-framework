@@ -395,6 +395,13 @@ def assessment(work, project, args, client=None):
         persist(work, project)
     directory = Path(project['assessments'][label]['directory'])
     run = read(directory / 'run.json')
+    if getattr(args, 'max_assessment_bytes', None) is not None:
+        limit = args.max_assessment_bytes
+        require(0 < limit <= 250000000, 'Assessment byte limit must be between 1 and 250000000')
+        require(not run['assessment_ready'], 'Cannot change limits on a sealed assessment')
+        run.setdefault('events', []).append({'event':'assessment_limit_changed', 'at':time.time(),
+            'from':run['settings']['max_assessment_bytes'], 'to':limit})
+        run['settings']['max_assessment_bytes'] = limit
     if args.findings and not run['assessment_ready']:
         run['assessment_input'] = args.findings
     if args.allow_new_assessment:
@@ -446,6 +453,11 @@ def verified_assessment(project, label):
     for item in run['assessment_index']:
         path = directory / 'assessment' / item['path']
         require(path.is_file() and sha(path) == item['sha256'], 'Assessment content changed')
+    for item in run.get('assessment_originals', []):
+        original = directory / item['file']
+        require(kw.safe_name(item['file']) and original.is_file() and not original.is_symlink()
+                and original.resolve().is_relative_to(directory.resolve()) and sha(original) == item['sha256'],
+                'Original assessment artifact changed or is missing')
     return directory, run
 
 
@@ -871,6 +883,7 @@ def parser():
         a.add_argument('--label')
         if command == 'assess': a.add_argument('--source')
         a.add_argument('--findings')
+        a.add_argument('--max-assessment-bytes', type=int, help='Explicit local export/expansion limit, up to 250 MB; records a run event')
         a.add_argument('--allow-new-assessment', action='store_true')
         a.add_argument('--wait', action='store_true')
         a.add_argument('--detach', action='store_true')

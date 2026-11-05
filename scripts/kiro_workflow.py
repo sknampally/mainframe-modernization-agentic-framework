@@ -309,6 +309,9 @@ def export_findings(run, directory, client, identity):
     target = directory / 'transform-artifacts'
     target.mkdir(exist_ok=True, mode=0o700)
     listing = list_assessment_exports(directory, client, identity)
+    listed_bytes = sum(item.get('sizeInBytes', 0) or 0 for item in listing['assets'] + listing['artifacts'])
+    require(listed_bytes <= run['settings']['max_assessment_bytes'],
+            'Listed assessment export exceeds byte limit; resume with --max-assessment-bytes')
     requests, seen = [], set()
     for item in listing.get('artifacts', listing.get('items', [])):
         if isinstance(item, dict) and item.get('artifactId'):
@@ -319,8 +322,6 @@ def export_findings(run, directory, client, identity):
     for item in listing.get('assets', []):
         require(isinstance(item, dict) and item.get('assetKey') and item.get('connectorId'),
                 'Asset export lacks identity or connector; findings cannot be sealed')
-        require(Path(item['assetKey']).suffix.lower() in TEXT_SUFFIXES,
-                'Assessment includes a non-text asset; configure a complete text-output location')
         key = ('asset', item['assetKey'])
         if key not in seen:
             seen.add(key)
@@ -332,7 +333,9 @@ def export_findings(run, directory, client, identity):
     for offset in range(0, len(requests), 10):
         calls = [('load_instructions', identity)]
         for index, arguments in enumerate(requests[offset:offset + 10], offset):
-            filename = f'finding-{index}.txt'
+            suffix = Path(arguments.get('assetKey', '')).suffix.lower()
+            suffix = suffix if suffix in TEXT_SUFFIXES | {'.zip', '.pdf', '.log', '.xml', '.html'} else '.txt'
+            filename = f'finding-{index}' + suffix
             path = target / filename
             # Never mistake an earlier failed download for a successful retry.
             if path.exists():
@@ -340,25 +343,58 @@ def export_findings(run, directory, client, identity):
             expected.append(path)
             calls.append(('get_resource', {**identity, **arguments, 'savePath': str(target), 'fileName': filename}))
         client.calls(calls)
+    limit = run['settings']['max_assessment_bytes']
     total = 0
     for path in expected:
         require(path.is_file() and not path.is_symlink(), 'Artifact download did not produce every expected file')
         total += path.stat().st_size
-        require(total <= run['settings']['max_assessment_bytes'], 'Assessment export exceeds byte limit')
-        raw = path.read_bytes()
-        require(b'\0' not in raw, 'Binary artifact export requires an explicit text-output location')
-        try:
-            raw.decode('utf-8')
-        except UnicodeDecodeError as error:
-            raise Blocked('Non-UTF-8 artifact; configure a text-output location') from error
-    # Exclude stale files if the service listing changed during a retry.
-    for path in target.glob('finding-*.txt'):
-        if path not in expected:
-            path.unlink()
-    private_save(directory / 'artifact-download-index.json', [
-        {'file': path.name, 'source': request, 'sha256':sha(path), 'bytes':path.stat().st_size}
-        for path, request in zip(expected, requests)])
-    collect_assessment(run, directory, str(target))
+        require(total <= limit, 'Assessment export exceeds byte limit; resume with --max-assessment-bytes')
+        path.chmod(0o600)
+    text_root = directory / 'export-text'
+    if text_root.exists():
+        shutil.rmtree(text_root)
+    text_root.mkdir(mode=0o700)
+    originals, expanded_total = [], 0
+    from modernize_source import extract_archive
+    for index, (path, request) in enumerate(zip(expected, requests)):
+        record = {'file': path.relative_to(directory).as_posix(), 'source':request,
+                  'sha256':sha(path), 'bytes':path.stat().st_size, 'text_files':[]}
+        candidates = [path]
+        is_zip = zipfile.is_zipfile(path)
+        require(path.suffix != '.zip' or is_zip, 'Downloaded ZIP is not a valid archive')
+        if is_zip:
+            extraction = directory / 'export-expanded' / str(index)
+            if extraction.exists():
+                shutil.rmtree(extraction)
+            extraction.parent.mkdir(exist_ok=True, mode=0o700)
+            with zipfile.ZipFile(path) as archive:
+                expanded_total += sum(item.file_size for item in archive.infolist())
+            require(expanded_total <= limit, 'Expanded assessment exceeds byte limit; resume with --max-assessment-bytes')
+            extract_archive(path, extraction, limit)
+            candidates = sorted(p for p in extraction.rglob('*') if p.is_file())
+        binary_count = 0
+        for number, candidate in enumerate(candidates):
+            raw = candidate.read_bytes()
+            if candidate.suffix.lower() == '.pdf' or raw.startswith(b'%PDF-'):
+                binary_count += 1
+                continue
+            try:
+                content = raw.decode('utf-8')
+                if b'\0' in raw: raise UnicodeDecodeError('utf-8',raw,0,1,'binary content')
+            except UnicodeDecodeError:
+                binary_count += 1
+                continue
+            filename = (path.name if len(candidates) == 1 and candidate == path and path.suffix in TEXT_SUFFIXES
+                        else f'finding-{index}-text-{number}.txt')
+            (text_root / filename).write_text(content)
+            record['text_files'].append({'file':filename, 'member':candidate.name if candidate == path else candidate.relative_to(extraction).as_posix()})
+        record['binary_files_not_text_extracted'] = binary_count
+        originals.append(record)
+    require(any(record['text_files'] for record in originals), 'No readable text in exported assessment')
+    private_save(text_root / 'original-artifacts.json', originals)
+    private_save(directory / 'artifact-download-index.json', originals)
+    collect_assessment(run, directory, str(text_root))
+    run['assessment_originals'] = originals
     run['assessment_provenance']['baseline_match'] = 'Job requested for this recorded source archive; ingestion and semantic content remain unverified'
 
 

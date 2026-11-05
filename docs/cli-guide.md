@@ -412,3 +412,22 @@ both project and run history. It preserves job identity, evidence and mutation
 receipts. It refuses upgrades after approval or while job creation is uncertain.
 It does not change the assessment scope or approve findings. A run with such an
 upgrade must disclose that it used multiple controller revisions.
+
+### Assessment exports
+
+Reframe traverses service-returned folders within the selected job output paths,
+downloads in bounded batches, and checks every expected file. Original ZIP/PDF
+and other assets stay private with source locations and SHA-256 hashes. ZIP text
+is extracted under path, file-count and expansion limits. Binary content that is
+not text-extracted is listed in `original-artifacts.json` for human review; it is
+not claimed as agent-readable evidence. Approval also checks original file hashes.
+
+For an export larger than the default local byte limit, explicitly increase it:
+
+```bash
+modernize resume --max-assessment-bytes 100000000 --wait
+```
+
+The limit change is recorded. The maximum accepted value is 250000000 bytes;
+download totals, archive expansion and collected text are each bounded. This does
+not increase model context limits or approve any findings.
