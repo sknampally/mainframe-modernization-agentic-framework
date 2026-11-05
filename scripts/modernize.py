@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import kiro_workflow as kw
 from pilot import Blocked, git, require, sha
-from modernize_artifacts import digest, validate_spec, validate_screens, render_site, SECTIONS
+from modernize_artifacts import digest, validate_spec, validate_screens, render_site, render_assessment_facts, SECTIONS
 from modernize_models import call as model_call
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
@@ -471,34 +471,100 @@ def assessment_report(work, project, args):
     def link(relative, title):
         require(kw.safe_name(relative), 'Unsafe review index path')
         return '<a href="' + html.escape(quote(relative, safe='/'), quote=True) + '">' + html.escape(title) + '</a>'
-    rows = []
-    for item in run.get('assessment_originals', []):
-        source = item.get('source', {})
-        title = source.get('assetKey') or source.get('artifactId') or item['file']
-        rows.append('<tr><td>' + link(item['file'], title) + '</td><td>' + str(item.get('bytes', 0))
-                    + '</td><td>' + html.escape(item['sha256']) + '</td><td>'
-                    + str(item.get('binary_files_not_text_extracted', 0)) + '</td></tr>')
-    texts = ''.join('<li>' + link('assessment/' + item['path'], item['path']) + '</li>'
-                    for item in run['assessment_index'])
-    completion = run.get('assessment_completion', {})
+    sections = {name: [] for name in ('Review issues first', 'Business rules', 'Data definitions',
+                                      'Program documentation', 'Technical reference')}
+    seen = set()
+    def add(section, relative, title):
+        if (section, title) not in seen:
+            seen.add((section, title))
+            sections[section].append('<li>' + link(relative, title) + '</li>')
+    originals = run.get('assessment_originals', [])
+    pdf_keys = {item.get('source', {}).get('assetKey', '')[:-4] for item in originals
+                if item.get('source', {}).get('assetKey', '').lower().endswith('.pdf')}
+    has_analysis_bundle = any(Path(item.get('source', {}).get('assetKey', '')).name == 'analyze_code_results.zip' for item in originals)
+    for item in originals:
+        key = item.get('source', {}).get('assetKey', '')
+        parts = Path(key).parts
+        basename = Path(key).name
+        lower = key.lower()
+        if ('logs' in parts or 'metadata' in parts or basename.lower() == 'coverpage.pdf'
+                or basename.lower().startswith(('generic', 'summary')) or lower.endswith('.log')):
+            continue
+        if '/business-documentation/' in lower:
+            add('Business rules', item['file'], 'Download business-rule reports (ZIP)')
+            # The ZIP contains human-facing HTML and matching JSON. Exposing both as
+            # flattened .txt files made the old report unreadable and duplicated it.
+            continue
+        if '/data_analysis/' in lower:
+            add('Data definitions', item['file'], 'Download complete data-analysis bundle (ZIP)')
+            for text in item.get('text_files', []):
+                member = text['member']
+                if member.lower().endswith('.csv'):
+                    add('Data definitions', 'assessment/' + text['file'], member)
+            continue
+        if basename == 'analyze_code_results.zip':
+            for text in item.get('text_files', []):
+                member = text['member']
+                if member.startswith(('missing_', 'code_issues_')):
+                    title = 'Missing dependencies (CSV)' if member.startswith('missing_') else 'Code analysis issues (CSV)'
+                    add('Review issues first', 'assessment/' + text['file'], title)
+                elif member.startswith('assets_'):
+                    add('Technical reference', 'assessment/' + text['file'], 'Assessed source inventory (CSV)')
+                elif member.startswith('dependencies_'):
+                    add('Technical reference', 'assessment/' + text['file'], 'Dependency details (JSON)')
+                elif member.startswith('scheduler/'):
+                    add('Technical reference', 'assessment/' + text['file'], 'Scheduler: ' + Path(member).name)
+            continue
+        if 'documentation' in parts:
+            if lower.endswith('.pdf'):
+                relative = '/'.join(parts[parts.index('documentation') + 1:])
+                add('Program documentation', item['file'], relative.removesuffix('.pdf'))
+            elif lower.endswith('.json') and key[:-5] not in pdf_keys:
+                add('Technical reference', item['file'], 'Documentation detail: ' + basename)
+            continue
+        if basename == 'dependency_graph.json':
+            add('Technical reference', item['file'], 'Application dependency graph (JSON)')
+        elif basename.startswith('codebase_issues'):
+            add('Technical reference', item['file'], 'Codebase issue details (JSON)')
+        elif has_analysis_bundle and (basename.startswith('classification_') or '/scheduler_knowledge/' in lower):
+            continue
+        else:
+            add('Technical reference', item['file'], basename or Path(item['file']).name)
+    if not originals:
+        # Imported findings have no AWS provenance mapping: retain reviewable input
+        # rather than hiding everything because it does not follow AWS naming.
+        for item in run['assessment_index']:
+            path = item['path']
+            if 'logs' not in Path(path).parts and not path.endswith('.log') and Path(path).name != 'original-artifacts.json':
+                add('Technical reference', 'assessment/' + path, path)
+    blocks = []
+    explanations = {
+        'Review issues first':'Resolve or explicitly accept missing inputs and analysis issues before approving the assessment.',
+        'Business rules':'Review the generated business descriptions against expected behavior. The bundle contains the original HTML reports.',
+        'Data definitions':'Inspect field definitions, layouts and data relationships with the data owner.',
+        'Program documentation':'Open the PDF for the program or job you are reviewing. Duplicate machine-readable versions are omitted.',
+        'Technical reference':'Supporting inventory, dependencies and scheduler details for the SME or architect.'}
+    for title, items in sections.items():
+        if not items:
+            continue
+        content = '<p>' + explanations[title] + '</p><ul>' + ''.join(items) + '</ul>'
+        if title in {'Data definitions', 'Program documentation', 'Technical reference'}:
+            blocks.append('<details><summary>' + title + ' (' + str(len(items)) + ')</summary>' + content + '</details>')
+        else:
+            blocks.append('<section><h2>' + title + '</h2>' + content + '</section>')
     page = ('<!doctype html><html lang="en"><meta charset="utf-8">'
         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">'
         '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Reframe assessment review</title>'
-        '<style>body{font:16px system-ui;margin:40px auto;padding:0 24px;max-width:1200px;color:#17243b}'
-        'h1,h2{color:#123d69}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #ccd4df;padding:10px;text-align:left;overflow-wrap:anywhere}'
-        '.notice{background:#fff4dc;padding:20px;border-left:4px solid #b87900}code{overflow-wrap:anywhere}a{color:#145dad}</style>'
-        '<h1>Assessment evidence review</h1><p class="notice">Awaiting human review. AWS output is evidence to examine, not proof of correctness or runtime equivalence. No Claude validation or implementation has been approved by this report.</p>'
-        '<h2>Recorded scope</h2><p>' + html.escape(run['objective']) + '</p><p>Source revision: <code>'
-        + html.escape(run['source']['commit']) + '</code></p><p>Completion basis: '
-        + html.escape(completion.get('basis', 'Imported findings; provenance requires confirmation'))
-        + '. AWS job status at retrieval: ' + html.escape(completion.get('service_job_status', 'not applicable')) + '.</p>'
-        '<h2>Review before approving</h2><ol><li>Confirm the source revision, upload coverage and assessment scope.</li>'
-        '<li>Inspect missing inputs, analysis warnings, documentation and business-rule outputs.</li>'
-        '<li>Review original PDFs and archives; binary files listed below were retained but not text-extracted.</li>'
-        '<li>Record limitations and an accountable approval decision before starting validation.</li></ol>'
-        '<h2>Original AWS outputs</h2><p>' + str(len(rows)) + ' original files. Links stay within the private run directory.</p>'
-        '<table><tr><th>Output</th><th>Bytes</th><th>SHA-256</th><th>Binary members not text-extracted</th></tr>'
-        + ''.join(rows) + '</table><h2>Extracted review text and provenance</h2><ul>' + texts + '</ul></html>')
+        '<style>body{font:16px/1.6 system-ui;margin:40px auto;padding:0 24px;max-width:960px;color:#17243b}'
+        'h1,h2{color:#123d69}section,details{margin:24px 0;padding:20px;border:1px solid #dbe2ec;border-radius:10px}'
+        'table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:7px 12px;border-bottom:1px solid #e1e7ef}dd{margin-bottom:18px}'
+        'summary{font-size:20px;font-weight:600;cursor:pointer}li{margin:8px 0;overflow-wrap:anywhere}'
+        '.notice{background:#fff4dc;padding:18px;border-left:4px solid #b87900}a{color:#145dad}</style>'
+        '<h1>Assessment review</h1><p class="notice">Awaiting human review. Generated findings require verification; no validation or implementation is approved by this report.</p>'
+        '<h2>Scope</h2><p>' + html.escape(run['objective']) + '</p>' + render_assessment_facts(run, directory, link) + ''.join(blocks)
+        + '<h2>Your decision</h2><p>Confirm the scope and source coverage, review the issues above, and record any accepted limitations before approving phase 1. Approval starts the separate validation phase; it does not establish runtime equivalence.</p>'
+        '<details><summary>Source baseline</summary><p>Source revision: <code>' + html.escape(run['source']['commit'])
+        + '</code></p></details><p>Operational logs, hashes, metadata and duplicate representations are omitted from this view. The complete private evidence is retained.</p></html>')
     target = directory / 'assessment-review.html'
     target.write_text(page); target.chmod(0o600)
     return {'status':'ASSESSMENT_REVIEW_READY', 'report':str(target), 'label':label,

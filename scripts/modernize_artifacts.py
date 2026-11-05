@@ -129,3 +129,75 @@ def render_site(spec, screens, decisions, title='Modernization review'):
     return '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
 <title>''' + esc(title) + '''</title><style>body{font:16px/1.6 system-ui;margin:0;background:#eef2f7;color:#172b46}main{max-width:1000px;margin:auto;padding:36px}article,details{background:white;border:1px solid #c9d4e2;border-radius:12px;padding:24px;margin:18px 0}h1{font-size:34px}h2{color:#153f72}label{display:block;margin:12px 0}input{display:block;padding:10px;width:90%;max-width:420px}button{padding:10px 20px;margin:8px;background:#dae5f3;border:1px solid #7185a0;border-radius:6px;color:#334}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{cursor:pointer;font-weight:700}.notice{padding:16px;background:#fff2cf;border-left:4px solid #8b6500}</style><main><h1>''' + esc(title) + '''</h1><p class="notice">Review prototype only. No backend, no executed equivalence tests, and no production deployment. Approval is recorded separately against this exact version.</p>''' + ''.join(blocks) + '</main></html>'
+
+
+def render_assessment_facts(run, directory, link):
+    """Deterministic counts and verbatim descriptions from sealed AWS exports."""
+    import csv
+    import io
+    from collections import Counter
+    index = {item['path'] for item in run['assessment_index']}
+    datasets = {}
+    descriptions = []
+    for original in run.get('assessment_originals', []):
+        key = original.get('source', {}).get('assetKey', '')
+        if Path(key).name == 'analyze_code_results.zip':
+            for item in original.get('text_files', []):
+                member = Path(item['member']).name
+                kind = next((kind for kind, prefix in [('inventory','assets_'),('issues','code_issues_'),('missing','missing_')]
+                             if member.startswith(prefix) and member.endswith('.csv')), None)
+                if not kind:
+                    continue
+                require(kind not in datasets, 'Multiple AWS summary inventories; select an unambiguous assessment export')
+                require(item['file'] in index, 'Summary input is not sealed assessment evidence')
+                reader = csv.DictReader(io.StringIO((directory/'assessment'/item['file']).read_text()))
+                required = {'inventory': {'Path','File type'}, 'issues': {'Severity'}, 'missing': {'Type'}}[kind]
+                require(required.issubset(reader.fieldnames or []), 'AWS summary CSV schema changed')
+                datasets[kind] = (list(reader), 'assessment/' + item['file'])
+        if key.endswith('/documentation/metadata/summary.json'):
+            value = json.loads((directory/original['file']).read_text())
+            if isinstance(value, dict):
+                programs = {k:v for k,v in value.items() if k not in {'application','metadata'}
+                            and isinstance(k,str) and isinstance(v,str)}
+                application = value.get('application') if isinstance(value.get('application'),str) else None
+                if programs or application:
+                    descriptions.append((programs, original['file'], application))
+    if not datasets and not descriptions:
+        return '<section><h2>AWS Transform facts</h2><p>No supported AWS inventory or supplied overview was found in the sealed evidence. No summary has been inferred.</p></section>'
+    def table(title, counts):
+        return ('<h3>' + title + '</h3><table><thead><tr><th>AWS label</th><th>Count</th></tr></thead><tbody>'
+                + ''.join('<tr><td>' + html.escape(str(k)) + '</td><td>' + str(v) + '</td></tr>'
+                          for k,v in sorted(counts.items(), key=lambda pair:(-pair[1],str(pair[0])))) + '</tbody></table>')
+    blocks = ['<section><h2>AWS Transform facts</h2><p>Calculated directly from AWS export rows; no LLM was called to prepare this summary. Labels are reproduced as supplied by AWS.</p>']
+    if 'inventory' in datasets:
+        rows, source = datasets['inventory']
+        paths = {row['Path'] for row in rows if row['Path']}
+        blocks.append('<p><strong>' + str(len(rows)) + ' file records</strong> in the AWS inventory; '
+                      + str(len(paths)) + ' distinct nonempty source paths. ' + link(source,'Source: AWS asset inventory') + '</p>')
+        blocks.append(table('File types',Counter(row['File type'] or 'Not reported' for row in rows)))
+        values = [row.get('Total lines','').strip() for row in rows]
+        if values and all(value.isdigit() for value in values):
+            blocks.append('<p>Total lines reported in the inventory: <strong>' + format(sum(int(v) for v in values),',') + '</strong>.</p>')
+    if 'issues' in datasets:
+        rows, source = datasets['issues']
+        blocks.append('<p><strong>' + str(len(rows)) + ' issue occurrences</strong> (CSV rows, not unique issue categories). '
+                      + link(source,'Source: AWS code issues') + '</p>')
+        blocks.append(table('Issue severity',Counter(row['Severity'] or 'Not reported' for row in rows)))
+    if 'missing' in datasets:
+        rows, source = datasets['missing']
+        blocks.append('<p><strong>' + str(len(rows)) + ' missing-dependency records</strong> (CSV rows). '
+                      + link(source,'Source: AWS missing dependencies') + '</p>')
+        blocks.append(table('Missing dependency types',Counter(row['Type'] or 'Not reported' for row in rows)))
+    blocks.append('</section>')
+    for value, source, application in descriptions:
+        if application:
+            blocks.append('<section><h2>AWS-provided application overview</h2>'
+                          '<p>Verbatim AWS Transform output; not rewritten or independently verified. '
+                          + link(source,'Source: AWS documentation summary') + '</p><blockquote style="white-space:pre-wrap">'
+                          + html.escape(application) + '</blockquote></section>')
+        blocks.append('<details><summary>AWS-provided program and job descriptions (' + str(len(value)) + ')</summary>'
+                      '<p>Verbatim AWS-generated descriptions, not a new AI summary or an independently verified application overview. Short or incomplete descriptions are preserved as supplied. '
+                      + link(source,'Source: AWS documentation summaries') + '</p><dl>'
+                      + ''.join('<dt><strong>' + html.escape(k) + '</strong></dt><dd>' + html.escape(v) + '</dd>' for k,v in sorted(value.items()))
+                      + '</dl></details>')
+    return ''.join(blocks)
