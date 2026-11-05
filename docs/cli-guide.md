@@ -441,3 +441,11 @@ modernize assessment-report
 Open the returned `assessment-review.html` locally. It leads with missing-input and code-issue reports, then groups business rules,
 data definitions and program PDFs. Logs, cover pages, metadata, hashes and duplicate
 JSON/text versions are omitted from the human view but retained as private evidence. It does not approve the findings or start agent validation.
+
+The review page also computes an AWS facts summary directly from the exported asset,
+issue and missing-dependency CSVs. It shows file records and distinct paths, counts
+by AWS file type, reported line totals when complete, issue-row severity counts and
+missing-dependency row counts. Source links identify each input; duplicate rows
+are not silently treated as unique files or issue categories. AWS documentation
+summaries, when supplied, are displayed verbatim under an expandable section and
+labeled as AWS-generated. No LLM is called to produce or rewrite this summary.

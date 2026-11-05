@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import kiro_workflow as kw
 from pilot import Blocked, git, require, sha
-from modernize_artifacts import digest, validate_spec, validate_screens, render_site, SECTIONS
+from modernize_artifacts import digest, validate_spec, validate_screens, render_site, render_assessment_facts, SECTIONS
 from modernize_models import call as model_call
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
@@ -557,10 +557,11 @@ def assessment_report(work, project, args):
         '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Reframe assessment review</title>'
         '<style>body{font:16px/1.6 system-ui;margin:40px auto;padding:0 24px;max-width:960px;color:#17243b}'
         'h1,h2{color:#123d69}section,details{margin:24px 0;padding:20px;border:1px solid #dbe2ec;border-radius:10px}'
+        'table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:7px 12px;border-bottom:1px solid #e1e7ef}dd{margin-bottom:18px}'
         'summary{font-size:20px;font-weight:600;cursor:pointer}li{margin:8px 0;overflow-wrap:anywhere}'
         '.notice{background:#fff4dc;padding:18px;border-left:4px solid #b87900}a{color:#145dad}</style>'
         '<h1>Assessment review</h1><p class="notice">Awaiting human review. Generated findings require verification; no validation or implementation is approved by this report.</p>'
-        '<h2>Scope</h2><p>' + html.escape(run['objective']) + '</p>' + ''.join(blocks)
+        '<h2>Scope</h2><p>' + html.escape(run['objective']) + '</p>' + render_assessment_facts(run, directory, link) + ''.join(blocks)
         + '<h2>Your decision</h2><p>Confirm the scope and source coverage, review the issues above, and record any accepted limitations before approving phase 1. Approval starts the separate validation phase; it does not establish runtime equivalence.</p>'
         '<details><summary>Source baseline</summary><p>Source revision: <code>' + html.escape(run['source']['commit'])
         + '</code></p></details><p>Operational logs, hashes, metadata and duplicate representations are omitted from this view. The complete private evidence is retained.</p></html>')

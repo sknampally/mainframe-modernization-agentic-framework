@@ -206,6 +206,29 @@ class PreparationTests(unittest.TestCase):
         self.assertIn('Awaiting human review',page)
         self.assertFalse(self.project['approvals'])
 
+    def test_aws_facts_count_export_rows_and_preserve_descriptions_without_model(self):
+        directory = self.root/'summary-fixture';(directory/'assessment').mkdir(parents=True)
+        inputs = {'assets.csv':'Path,File type,Total lines\na.cbl,COB,10\nb.cpy,CPY,3\na.cbl,COB,10\n',
+                  'issues.csv':'Severity\nERROR\nWARNING\nERROR\n',
+                  'missing.csv':'Type\nMissing Program\nMissing Program\n'}
+        for name, content in inputs.items(): (directory/'assessment'/name).write_text(content)
+        (directory/'summary.json').write_text(json.dumps({'a.cbl':'AWS text <script>unchanged</script>', 'application':'AWS overview unchanged', 'metadata':{'file_count':1}}))
+        run = {'assessment_index':[{'path':name} for name in inputs], 'assessment_originals':[
+            {'file':'archive.zip','source':{'assetKey':'transform-output/fixture/results/analyze_code_results.zip'},
+             'text_files':[{'member':member,'file':file} for member,file in
+                 [('assets_export.csv','assets.csv'),('code_issues_export.csv','issues.csv'),('missing_export.csv','missing.csv')]]},
+            {'file':'summary.json','source':{'assetKey':'transform-output/fixture/documentation/metadata/summary.json'}}]}
+        with patch.object(app,'model_call',side_effect=AssertionError('No model invocation')):
+            page = artifacts.render_assessment_facts(run,directory,lambda path,title:title)
+        for text in ['3 file records','2 distinct nonempty source paths','3 issue occurrences',
+                     '2 missing-dependency records','23','AWS text &lt;script&gt;unchanged&lt;/script&gt;',
+                     'Verbatim AWS-generated descriptions','AWS overview unchanged','AWS-provided application overview']:
+            self.assertIn(text,page)
+        self.assertNotIn('<script>',page)
+        (directory/'assessment/assets.csv').write_text('Unexpected,Schema\na,b\n')
+        with self.assertRaisesRegex(app.Blocked,'schema changed'):
+            artifacts.render_assessment_facts(run,directory,lambda path,title:title)
+
     def test_human_review_omits_logs_metadata_and_duplicate_document_formats(self):
         self.assess()
         directory = Path(self.project['assessments']['a']['directory'])
@@ -216,10 +239,10 @@ class PreparationTests(unittest.TestCase):
                  ('documentation/metadata/summary.json','metadata.json',[]),
                  ('documentation/app/PROGRAM-cbl.json','duplicate.json',[]),
                  ('documentation/app/PROGRAM-cbl.pdf','program.pdf',[]),
-                 ('results/analyze_code_results.zip','analysis.zip',[{'member':'missing_fixture.csv','file':'rules.json'}]),
+                 ('results/analyze_code_results.zip','analysis.zip',[{'member':'missing_fixture.txt','file':'rules.json'}]),
                  ('1/business-documentation/output.zip','rules.zip',[])]
         for key, filename, texts in cases:
-            path = directory/filename;path.write_text('fixture')
+            path = directory/filename;path.write_text('{}' if filename == 'metadata.json' else 'fixture')
             run['assessment_originals'].append({'file':filename,'sha256':app.sha(path),
                 'source':{'assetKey':'transform-output/fixture/'+key},'text_files':texts})
         app.write(directory/'run.json',run)
