@@ -59,6 +59,34 @@ def context_for(summaries, rules, scope, limit):
     return result
 
 
+def normalize_design(value):
+    value = json.loads(json.dumps(value))
+    for screen in value.get('screens', []):
+        states = screen.get('states')
+        if isinstance(states, dict) and states and all(isinstance(k,str) and isinstance(v,str) and v.strip() for k,v in states.items()):
+            screen['states'] = [key.title() + ': ' + text for key,text in states.items()]
+    return value
+
+
+def verified_saved_reply(destination, state, app):
+    value = app.read(destination / f'design-reply-{state["calls"]}.json')
+    receipt = app.read(destination / f'provider-{state["calls"]}.json')
+    require(receipt.get('provider') == state['provider'] and receipt.get('returncode') == 0,
+            'Saved provider response did not succeed')
+    if state['provider'] == 'claude':
+        envelope = json.loads(receipt['stdout'])
+        require(not envelope.get('is_error'), 'Saved provider response contains an error')
+        text = envelope['result']
+    else:
+        events = [json.loads(line) for line in receipt['stdout'].splitlines() if line.strip()]
+        messages = [x['item']['text'] for x in events if x.get('type') == 'item.completed' and x.get('item',{}).get('type') == 'agent_message']
+        require(messages, 'Saved provider message missing')
+        text = messages[-1]
+    if text.strip().startswith('```json'): text = text.strip()[7:-3]
+    require(json.loads(text) == value, 'Saved design reply differs from provider receipt')
+    return normalize_design(value)
+
+
 def validate(value, rules):
     require(isinstance(value,dict) and isinstance(value.get('sections'),dict) and set(value['sections'])==set(SECTIONS), 'All ten planning sections required')
     for section in value['sections'].values():
@@ -111,8 +139,10 @@ def run(work, project, args, app, runtime=None):
         require(state['owner']==args.by and state['reason']==args.note, 'Skip decision differs from saved preview')
         if state['framework_commit'] != current:
             require(getattr(args,'refresh_export',False), 'Preview framework changed; use --refresh-export to re-export the saved design without another model call')
-            require((destination/'proposed-design.json').exists() and sha(destination/'proposed-design.json')==state.get('design_sha256'),
-                    'A verified saved design is required for export refresh')
+            if (destination/'proposed-design.json').exists():
+                require(sha(destination/'proposed-design.json')==state.get('design_sha256'), 'Preview design changed')
+            else:
+                verified_saved_reply(destination,state,app)
             state.setdefault('generation_framework_commit',state['framework_commit'])
             state.setdefault('export_updates',[]).append({'from':state['framework_commit'],'to':current,'at':time.time()})
             state['framework_commit']=current
@@ -130,6 +160,10 @@ def run(work, project, args, app, runtime=None):
     if model_path.exists():
         require(state.get('design_sha256')==sha(model_path), 'Preview design changed')
         value=app.read(model_path)
+    elif getattr(args,'refresh_export',False):
+        value=verified_saved_reply(destination,state,app)
+        validate(value,rules)
+        app.write(model_path,value);state['design_sha256']=sha(model_path);state.pop('validation_error',None);app.write(state_path,state)
     else:
         require(state['calls']<3, 'Preview generation reached its separate three-call limit; inspect saved replies')
         context=context_for(summaries,rules,project['scope'],project['settings']['max_context_bytes'])
@@ -141,6 +175,7 @@ def run(work, project, args, app, runtime=None):
         provider_run={'settings':project['settings'],'model_calls':state['calls']}
         value=(runtime or app.model_call)(args.provider,provider_run,destination,'wireframes',message)
         app.write(destination/f'design-reply-{state["calls"]}.json',value)
+        value=normalize_design(value)
         try: validate(value,rules)
         except app.Blocked as error:
             state['validation_error']=str(error);app.write(state_path,state);raise

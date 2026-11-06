@@ -115,3 +115,20 @@ class PreviewTests(unittest.TestCase):
         result=preview.run(self.work,self.project,self.arguments,app,lambda *a:self.fail('No generation during export refresh'))
         self.assertEqual(result['model_calls'],1)
         self.assertEqual(app.read(state_path)['generation_framework_commit'],'b'*40)
+
+    def test_named_screen_states_are_normalized_without_losing_text(self):
+        value={'screens':[{'states':{'normal':'Ready','rejection':'Invalid','boundary':'Limit'}}]}
+        result=preview.normalize_design(value)
+        self.assertEqual(result['screens'][0]['states'],['Normal: Ready','Rejection: Invalid','Boundary: Limit'])
+        self.assertIsInstance(value['screens'][0]['states'],dict)
+
+    def test_saved_reply_requires_matching_provider_receipt(self):
+        d=self.work/'response';d.mkdir()
+        raw={'screens':[{'states':{'normal':'Ready'}}]}
+        app.write(d/'design-reply-1.json',raw)
+        app.write(d/'provider-1.json',{'provider':'claude','returncode':0,'stdout':json.dumps({'result':json.dumps(raw)})})
+        state={'provider':'claude','calls':1}
+        result=preview.verified_saved_reply(d,state,app)
+        self.assertEqual(result['screens'][0]['states'],['Normal: Ready'])
+        app.write(d/'design-reply-1.json',{})
+        with self.assertRaisesRegex(Blocked,'differs'):preview.verified_saved_reply(d,state,app)
