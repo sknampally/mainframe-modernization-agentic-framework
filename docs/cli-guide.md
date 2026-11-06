@@ -452,7 +452,7 @@ labeled as AWS-generated. No LLM is called to produce or rewrite this summary.
 
 Preparation agents receive descriptive evidence labels and a bounded rolling read
 context. Full read receipts stay private; omitted older bodies are explicitly
-indexed and can be requested again. Per-role working notes are model claims, not
+indexed and can be requested again. Per-role cited findings are model claims, not
 new evidence. Read-size errors return corrective feedback within the same recorded
 call budget. An upgrade does not reset consumed calls or grant further approval.
 
@@ -473,3 +473,22 @@ provider-N.json --by "Owner" --note "Reviewed correction"`, then resume. This ke
 the original refusal, hashes the reviewed receipt and revised protocol, and retains
 approval and consumed calls. A refusal of the revised request stops again; this
 command cannot repeatedly clear it. It does not disable provider safeguards.
+
+### Changing the preparation call cap
+
+With the run owner's authorization, use:
+
+```bash
+modernize model-budget --max-calls 64 --by "Run owner" --note "Approved additional assessment coverage"
+modernize resume
+```
+
+This sets the total cap, not an additional allowance. Consumed calls remain counted,
+and the change records the owner, rationale, old cap and new cap. It does not change
+the Claude subscription, buy credits, clear a provider refusal or approve findings.
+A call count limits requests; it is not a token or monetary estimate. Provider usage
+limits still apply. Never change the cap simply to conceal repeated failures.
+
+An invalid structured candidate is retained privately and returned to the executor
+with validation feedback. Correction attempts consume the same total budget. Only
+a valid candidate can proceed to independent review; correction is not approval.
