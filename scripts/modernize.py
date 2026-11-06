@@ -780,8 +780,9 @@ def pipeline(work, project, args, runtime=model_call):
             'feedback': project.get('feedback', []), 'decisions': project['decisions'],
             'remaining_model_calls': project['settings']['max_model_calls'] - state['calls'],
             'evidence_notes': state.get('evidence_notes', {}).get(key, [])}
-        prior_reply = area / f'reply-{state["calls"]}.json'
-        if role == 'executor' and prior_reply.exists():
+        prior_reply = next((area / f'reply-{n}.json' for n in range(state['calls'], 0, -1)
+                            if (area / f'reply-{n}.json').exists()), None)
+        if role == 'executor' and prior_reply is not None:
             prior = read(prior_reply)
             if prior.get('kind') == 'candidate':
                 try:
