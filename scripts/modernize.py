@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import kiro_workflow as kw
 from pilot import Blocked, git, require, sha
 from modernize_artifacts import digest, validate_spec, validate_screens, render_site, render_assessment_facts, SECTIONS
-from modernize_models import call as model_call, ProviderSafetyRefusal, check_provider_refusals
+from modernize_models import call as model_call, ProviderSafetyRefusal, check_provider_refusals, preparation_protocol_hash
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
 
@@ -660,6 +660,43 @@ def decision(work, project, args):
     return {'status': project['stage']}
 
 
+def recover_provider_request(work, project, args):
+    """Record explicit review of one refusal before a revised, evidence-only request."""
+    require(project['stage'] == 'PROVIDER_REVIEW_REQUIRED' and not project.get('specification'),
+            'Recovery requires a saved provider refusal and no completed candidate')
+    require(args.by.strip() and args.note.strip(), 'Named owner and reviewed correction required')
+    require(re.fullmatch(r'provider-[0-9]+\.json', args.receipt), 'Select one provider receipt basename')
+    area = work / 'preparation'; receipt = area / args.receipt
+    require(receipt.is_file(), 'Provider receipt not found')
+    data = read(receipt); envelope = json.loads(data.get('stdout','{}'))
+    require(data.get('provider') == 'claude' and envelope.get('is_error')
+            and '[reasoning_extraction]' in str(envelope.get('result','')),
+            'Only the reviewed reasoning-extraction refusal supports this request correction')
+    request = area / args.receipt.replace('provider-', 'provider-request-')
+    old_request = read(request).get('message','') if request.exists() else ''
+    require(not old_request or '"evidence_notes"' not in old_request,
+            'Revised evidence-only request was already refused; provider review is required')
+    protocol = (FRAMEWORK/'prompts/pipeline/executor.md').read_text()
+    require('evidence_notes' in protocol and 'private chain-of-thought' in protocol,
+            'Install the evidence-only protocol before recovery')
+    verify_source(project)
+    verified_assessment(project, project['selected'])
+    approved(project,'assessment',project['assessments'][project['selected']]['sha256'])
+    recovery_path = area/'provider-recovery.json'
+    recovery = read(recovery_path) if recovery_path.exists() else {}
+    require(args.receipt not in recovery, 'This refusal has already been reviewed; no repeated recovery')
+    record = {'receipt_sha256':sha(receipt),'protocol_sha256':preparation_protocol_hash(),
+              'by':args.by,'note':args.note,'at':time.time()}
+    recovery[args.receipt] = record; write(recovery_path,recovery)
+    project.setdefault('events',[]).append({'event':'provider_request_corrected','receipt':args.receipt,**record})
+    project['pipeline']['status'] = 'RUNNING'
+    project['pipeline'].pop('reason',None)
+    project['stage'] = 'RUNNING_' + project['pipeline']['role'].upper()
+    persist(work,project)
+    return {'status':'REVISED_REQUEST_READY','calls_consumed':project['pipeline']['calls'],
+            'next_step':'modernize resume; new provider refusals still stop automatically'}
+
+
 def assessment_catalog(run):
     """Expose useful labels without flooding model context with evidence hashes."""
     mapped = {}
@@ -683,7 +720,8 @@ def bounded_preparation_context(context, limit):
     """Retain recent verbatim reads; explicitly index older reads instead of silently truncating."""
     context = dict(context)
     original = context['history']
-    context['history'] = list(original)
+    context['history'] = [{**entry, 'request':{k:v for k,v in entry['request'].items()
+                            if k in {'kind','area','paths','start','end'}}} for entry in original]
     omitted = []
     while len(json.dumps(context).encode()) > limit and context['history']:
         entry = context['history'].pop(0)
@@ -722,7 +760,7 @@ def pipeline(work, project, args, runtime=model_call):
             'assessment_provenance': assessment_run.get('assessment_provenance'), 'history': history,
             'feedback': project.get('feedback', []), 'decisions': project['decisions'],
             'remaining_model_calls': project['settings']['max_model_calls'] - state['calls'],
-            'working_notes': state.get('notes', {}).get(key, '')}
+            'evidence_notes': state.get('evidence_notes', {}).get(key, [])}
         if role == 'reviewer':
             candidate_path = area / f'candidate-{number}.json'
             require(sha(candidate_path) == state['candidate_sha256'], 'Candidate changed after handoff')
@@ -737,9 +775,14 @@ def pipeline(work, project, args, runtime=model_call):
         reply = runtime(project['providers'][role], run, area, role, message)
         verify_source(project)
         write(area / f'reply-{state["calls"]}.json', reply)
-        if isinstance(reply.get('notes'), str):
-            require(len(reply['notes'].encode()) <= 12000, 'Working notes exceed 12000 bytes')
-            state.setdefault('notes', {})[key] = reply['notes']
+        if 'evidence_notes' in reply:
+            notes = reply['evidence_notes']
+            require(isinstance(notes, list) and len(json.dumps(notes).encode()) <= 12000
+                    and all(isinstance(n,dict) and set(n) == {'statement','source_path','source_anchor','status'}
+                        and all(isinstance(v,str) and v.strip() for v in n.values())
+                        and n['status'] in {'SOURCE_VERIFIED','INFERRED','UNKNOWN'} for n in notes),
+                    'Evidence notes must be bounded factual assertions with citations and status')
+            state.setdefault('evidence_notes', {})[key] = notes
         if reply.get('kind') == 'read':
             try:
                 chunks = kw.source_read(run, assessment_dir, role, reply)
@@ -1053,6 +1096,10 @@ def parser():
         a.add_argument('--detach', action='store_true')
         a.add_argument('--attach-job')
     commands.add_parser('status')
+    recovery = commands.add_parser('recover-provider', help='Record review of a reasoning-extraction refusal before an evidence-only retry')
+    recovery.add_argument('--receipt', required=True)
+    recovery.add_argument('--by', required=True)
+    recovery.add_argument('--note', required=True)
     report = commands.add_parser('assessment-report', help='Generate a private HTML index of sealed assessment evidence')
     report.add_argument('--label')
     upgrade = commands.add_parser('upgrade-framework', help='Record a controller update before candidate handoff; preserve approved evidence')
@@ -1165,6 +1212,7 @@ def main(argv=None, reporter=None):
                         result = package(work, project)
                     elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
+                    elif args.command == 'recover-provider': result = recover_provider_request(work, project, args)
                     elif args.command == 'assessment-report': result = assessment_report(work, project, args)
                     elif args.command == 'upgrade-framework': result = upgrade_framework(work, project, args)
                     elif args.command == 'setup': result = setup(work, project, args)

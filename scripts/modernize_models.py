@@ -1,5 +1,6 @@
 """Provider processes for the preparation workflow; agents never receive AWS tools."""
 import json
+import hashlib
 import os
 import shutil
 import signal
@@ -14,7 +15,15 @@ class ProviderSafetyRefusal(Blocked):
     """A provider policy refusal requires review, not an automatic runtime retry."""
 
 
+def preparation_protocol_hash():
+    root = Path(__file__).resolve().parent.parent / 'prompts/pipeline'
+    return hashlib.sha256(b'\0'.join((root/name).read_bytes() for name in ('executor.md','reviewer.md'))).hexdigest()
+
+
 def check_provider_refusals(directory):
+    recovery_path = directory / 'provider-recovery.json'
+    recovery = json.loads(recovery_path.read_text()) if recovery_path.exists() else {}
+
     for path in directory.glob('provider-*.json'):
         receipt = json.loads(path.read_text())
         if receipt.get('provider') != 'claude':
@@ -25,6 +34,10 @@ def check_provider_refusals(directory):
             continue
         result = str(envelope.get('result', ''))
         if envelope.get('is_error') and ('safeguards flagged' in result.lower() or '[reasoning_extraction]' in result):
+            reviewed = recovery.get(path.name, {})
+            if (reviewed.get('receipt_sha256') == hashlib.sha256(path.read_bytes()).hexdigest()
+                    and reviewed.get('protocol_sha256') == preparation_protocol_hash()):
+                continue
             raise ProviderSafetyRefusal('Claude refused a request under its safeguards. Review the private provider receipt and request content before any further model calls; no candidate approval is implied.')
 
 

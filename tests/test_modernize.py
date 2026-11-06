@@ -18,6 +18,24 @@ import pilot
 
 
 class PreparationTests(unittest.TestCase):
+    def test_reviewed_request_correction_retains_refusal_and_stops_on_new_refusal(self):
+        self.baseline()
+        area=self.work/'preparation';area.mkdir()
+        refusal={'provider':'claude','stdout':json.dumps({'is_error':True,'result':'safeguards flagged [reasoning_extraction]'})}
+        app.write(area/'provider-10.json',refusal)
+        self.project['stage']='PROVIDER_REVIEW_REQUIRED'
+        self.project['pipeline']={'calls':10,'role':'executor','status':'PROVIDER_REVIEW_REQUIRED'}
+        approvals=copy.deepcopy(self.project['approvals'])
+        args=argparse.Namespace(receipt='provider-10.json',by='Fixture owner',note='Replace free-form notes with cited findings')
+        result=app.recover_provider_request(self.work,self.project,args)
+        self.assertEqual(result['calls_consumed'],10)
+        self.assertEqual(self.project['approvals'],approvals)
+        self.assertEqual(app.read(area/'provider-10.json'),refusal)
+        models.check_provider_refusals(area)
+        with self.assertRaises(app.Blocked): app.recover_provider_request(self.work,self.project,args)
+        app.write(area/'provider-11.json',refusal)
+        with self.assertRaises(app.ProviderSafetyRefusal): models.check_provider_refusals(area)
+
     def test_saved_provider_safeguard_refusal_blocks_without_new_model_calls(self):
         self.baseline()
         area=self.work/'preparation';area.mkdir()
@@ -31,11 +49,13 @@ class PreparationTests(unittest.TestCase):
     def test_preparation_context_compacts_without_mutating_read_receipts(self):
         history = [{'request':{'area':'source','paths':[str(n)]}, 'response':[
             {'area':'source','path':str(n),'text':str(n)*2000}]} for n in range(3)]
+        history[0]['request']['notes'] = 'private planning text must not be replayed'
         original = copy.deepcopy(history)
         message = app.bounded_preparation_context({'history':history,'working_notes':'Claim to verify'},3500)
         decoded = json.loads(message)
         self.assertLessEqual(len(message.encode()),3500)
         self.assertEqual(history,original)
+        self.assertNotIn('private planning text',message)
         self.assertIn('earlier_reads',decoded)
         self.assertEqual(decoded['history'][-1]['response'][0]['path'],'2')
 

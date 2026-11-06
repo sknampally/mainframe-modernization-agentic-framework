@@ -29,8 +29,11 @@ identifies evidence that cannot currently be obtained. All tests remain NOT RUN.
 Assessment inventory labels identify original AWS reports. Prefer inventories,
 missing dependencies, issue reports, structured business rules and relevant source;
 do not spend calls reading operational logs. The controller may omit older read
-bodies with an explicit earlier_reads index. Include optional `notes` (at most
-12000 UTF-8 bytes) in each reply to retain concise working observations and exact
-source anchors. Notes are your own claims, not new evidence; reread any needed
-ranges. Use remaining_model_calls to reserve enough calls for independent review.
-Do not silently narrow the controller's selected scope to a single journey.
+bodies with an explicit earlier_reads index. You may return `evidence_notes` as an
+array of factual assertions: {statement,source_path,source_anchor,status}, where
+status is SOURCE_VERIFIED, INFERRED or UNKNOWN. Limit the array to 12000 UTF-8 bytes.
+These are reviewable findings, not private chain-of-thought. Do not provide internal
+reasoning, scratchpads, deliberation, or internal call plans. Return concise results,
+source citations, missing evidence and decisions only. The controller preserves
+these citations; reread source ranges where needed. Do not silently narrow the
+controller's selected scope to a single journey.

@@ -461,3 +461,15 @@ If a provider declines a request under its safeguards, Reframe records
 finding, authentication failure or approval. Inspect the private provider receipt
 and request content before deciding how to resolve it. Requests are saved privately
 for subsequent calls; existing assessment approval and consumed call counts remain.
+
+### Correcting an unintended reasoning request
+
+The preparation protocol requests structured findings and source citations, not
+private reasoning, scratchpads or call plans. Historical free-form notes remain in
+private receipts but are not replayed to providers. After inspecting a recorded
+`reasoning_extraction` refusal and correcting the output contract, an authorized
+operator can record the review with `modernize recover-provider --receipt
+provider-N.json --by "Owner" --note "Reviewed correction"`, then resume. This keeps
+the original refusal, hashes the reviewed receipt and revised protocol, and retains
+approval and consumed calls. A refusal of the revised request stops again; this
+command cannot repeatedly clear it. It does not disable provider safeguards.
