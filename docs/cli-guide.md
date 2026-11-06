@@ -492,3 +492,36 @@ limits still apply. Never change the cap simply to conceal repeated failures.
 An invalid structured candidate is retained privately and returned to the executor
 with validation feedback. Correction attempts consume the same total budget. Only
 a valid candidate can proceed to independent review; correction is not approval.
+
+### Use Transform findings directly for a draft
+
+An engineer who trusts the completed AWS assessment can explicitly skip independent
+executor/reviewer validation for a preview:
+
+```bash
+modernize preview --skip-validation --by "Assessment owner" --note "Accept AWS findings as assumptions for design review" --provider codex
+```
+
+Use `--provider claude` to generate the same structured draft with Claude instead.
+This calls the selected provider for design/wireframe content; it does **not** run
+the executor/reviewer verification loop. Up to three generation attempts are counted
+in a separate preview ledger. It does not reset or increase the validation call cap.
+
+The command imports the complete supported AWS `all_rules` catalog deterministically,
+uses AWS program summaries and clearly labeled rule examples to propose screens and
+API contracts, and exports a private AI-DLC draft ZIP. It includes architecture,
+UI, services, data, infrastructure, security, migration, testing, operations and
+delivery prompts, a backlog, monorepo layout, skills and engineering instructions.
+Wireframe mappings are illustrative rather than exhaustive. All imported rules stay
+marked `AWS_ASSUMED`; acceptance criteria stay `NOT RUN`.
+
+The named owner, reason and assessment fingerprint are recorded as
+`SKIPPED_BY_OWNER`, never reviewer PASS. Assessment approval is required. Existing
+validation state and human approval records remain unchanged. SME/architect and
+business/technical-lead reviews remain pending before an approved implementation
+handoff. The draft cannot be treated as the normal gated `package` command's output.
+
+Open the returned HTML path to review the wireframes and download/use the returned
+ZIP for design review. Repeating the same command reuses the saved design, with hash
+checks and no extra generation call. Use a different `--name` for a new version.
+All outputs stay outside the public framework repository; review before sharing.
