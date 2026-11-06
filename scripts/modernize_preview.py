@@ -25,10 +25,11 @@ def extract(directory, run, app):
             value = app.read(path)
         except (ValueError, UnicodeError):
             continue
-        if not isinstance(value, dict) or not isinstance(value.get('all_rules'), list):
-            continue
+        if not isinstance(value, dict): continue
+        field = 'all_rules' if isinstance(value.get('all_rules'), list) else 'rules'
+        if not isinstance(value.get(field), list) or not all(isinstance(r,dict) and 'Rule_Id' in r for r in value[field]): continue
         program = str(value.get('program_name') or value.get('name') or item['path'])
-        for index, record in enumerate(value['all_rules']):
+        for index, record in enumerate(value[field]):
             require(isinstance(record,dict), 'Unsupported AWS rule record')
             identity = digest({'program':program,'record':record})
             if identity in seen: continue
@@ -38,7 +39,7 @@ def extract(directory, run, app):
                 'statement':record.get('Rule_Description') or record.get('Rule_Name') or 'See AWS record',
                 'acceptance_criteria':record.get('Acceptance_Criteria'), 'aws_record':record,
                 'evidence_status':'AWS_ASSUMED', 'source_path':item['path'],
-                'source_anchor':f'/all_rules/{index}', 'assessment_file_sha256':item['sha256']})
+                'source_anchor':f'/{field}/{index}', 'assessment_file_sha256':item['sha256']})
     require(summaries or rules, 'No supported AWS summaries or business-rule exports found; retain originals and add an importer')
     return summaries, rules
 
@@ -105,9 +106,18 @@ def run(work, project, args, app, runtime=None):
     state_path=destination/'preview-state.json'
     if state_path.exists():
         state=app.read(state_path)
-        require(state['assessment_sha256']==fingerprint and state['provider']==args.provider and state['framework_commit']==current,
+        require(state['assessment_sha256']==fingerprint and state['provider']==args.provider,
                 'Preview baseline changed; use a new preview name')
         require(state['owner']==args.by and state['reason']==args.note, 'Skip decision differs from saved preview')
+        if state['framework_commit'] != current:
+            require(getattr(args,'refresh_export',False), 'Preview framework changed; use --refresh-export to re-export the saved design without another model call')
+            require((destination/'proposed-design.json').exists() and sha(destination/'proposed-design.json')==state.get('design_sha256'),
+                    'A verified saved design is required for export refresh')
+            state.setdefault('generation_framework_commit',state['framework_commit'])
+            state.setdefault('export_updates',[]).append({'from':state['framework_commit'],'to':current,'at':time.time()})
+            state['framework_commit']=current
+            state['status']='DRAFT'
+            app.write(state_path,state)
     else:
         require(not any(destination.iterdir()), 'Preview directory already contains files; choose a new name')
         state={'status':'DRAFT','verification':'SKIPPED_BY_OWNER','owner':args.by,'reason':args.note,
@@ -172,7 +182,7 @@ def run(work, project, args, app, runtime=None):
     for r in rules: groups.setdefault(r['program'],[]).append(r)
     e=html.escape
     (bundle/'rules.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><title>AWS rule catalog</title><style>body{font:16px system-ui;max-width:1000px;margin:40px auto}article{padding:16px;border-bottom:1px solid #ddd}pre{white-space:pre-wrap}</style><h1>AWS rule catalog</h1><p>'+e(NOTICE)+'</p><a href="index.html">Back to design preview</a>'+''.join('<details><summary>'+e(program)+' · '+str(len(items))+' rules</summary>'+''.join('<article><h3>'+e(str(r['name']))+'</h3><p>'+e(str(r['statement']))+'</p><pre>'+e(json.dumps(r['acceptance_criteria'],indent=2))+'</pre><small>'+e(r['id']+' · '+r['source_path']+' '+r['source_anchor'])+'</small></article>' for r in items)+'</details>' for program,items in groups.items())+'</html>')
-    app.write(bundle/'provenance.json',{'assessment_sha256':fingerprint,'framework_commit':current,'source_commit':project['source']['commit'],'verification':'SKIPPED_BY_OWNER','assistance':'Design content generated with '+args.provider+'; AWS rule records imported deterministically','preview_model_calls':state['calls']})
+    app.write(bundle/'provenance.json',{'assessment_sha256':fingerprint,'framework_commit':current,'source_commit':project['source']['commit'],'verification':'SKIPPED_BY_OWNER','generation_framework_commit':state.get('generation_framework_commit',current),'assistance':'Design content generated with '+args.provider+'; AWS rule records imported deterministically','preview_model_calls':state['calls']})
     app.write(bundle/'checksums.json',{p.name:sha(p) for p in bundle.iterdir() if p.is_file() and p.name!='checksums.json'})
     archive=destination/'ai-dlc-draft.zip'
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:

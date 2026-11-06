@@ -1138,6 +1138,7 @@ def parser():
     preview.add_argument('--note', required=True)
     preview.add_argument('--provider', choices=['claude','codex'], default='codex')
     preview.add_argument('--name', default='transform-direct')
+    preview.add_argument('--refresh-export', action='store_true', help='Re-export a verified saved design after a CLI update, without new model calls')
     budget = commands.add_parser('model-budget', help='Record an explicit total preparation model-call cap')
     budget.add_argument('--max-calls', required=True, type=int)
     budget.add_argument('--by', required=True)

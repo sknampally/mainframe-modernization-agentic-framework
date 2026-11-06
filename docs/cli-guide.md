@@ -507,7 +507,7 @@ This calls the selected provider for design/wireframe content; it does **not** r
 the executor/reviewer verification loop. Up to three generation attempts are counted
 in a separate preview ledger. It does not reset or increase the validation call cap.
 
-The command imports the complete supported AWS `all_rules` catalog deterministically,
+The command imports the complete supported AWS COBOL `all_rules` and JCL `rules` catalogs deterministically,
 uses AWS program summaries and clearly labeled rule examples to propose screens and
 API contracts, and exports a private AI-DLC draft ZIP. It includes architecture,
 UI, services, data, infrastructure, security, migration, testing, operations and
@@ -525,3 +525,5 @@ Open the returned HTML path to review the wireframes and download/use the return
 ZIP for design review. Repeating the same command reuses the saved design, with hash
 checks and no extra generation call. Use a different `--name` for a new version.
 All outputs stay outside the public framework repository; review before sharing.
+
+After a CLI export/importer fix, `preview --refresh-export` can re-export a hash-verified saved design without another model call. The original generation revision and export update are recorded. This does not rerun the skipped verification agents or grant any approval.

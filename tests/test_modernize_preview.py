@@ -96,3 +96,22 @@ class PreviewTests(unittest.TestCase):
         content=Path(result['html']).read_text()
         self.assertNotIn('<script>',content)
         self.assertIn('&lt;script&gt;',content)
+
+    def test_jcl_rules_format_is_imported_with_its_original_pointer(self):
+        directory,run=app.verified_assessment(self.project,self.project['selected'])
+        path=directory/'assessment'/'job.json'
+        path.write_text(json.dumps({'name':'JOB1','rules':[{'Rule_Id':'J1','Rule_Name':'Sort records','Rule_Description':'Sort input'}]}))
+        run['assessment_index'].append({'path':path.name,'sha256':sha(path)})
+        _,rules=preview.extract(directory,run,app)
+        job=next(r for r in rules if r['program']=='JOB1')
+        self.assertEqual(job['source_anchor'],'/rules/0')
+        self.assertEqual(job['evidence_status'],'AWS_ASSUMED')
+
+    def test_export_refresh_reuses_verified_design_without_model_call(self):
+        preview.run(self.work,self.project,self.arguments,app,self.runtime)
+        state_path=self.work/'preview-transform-direct'/'preview-state.json'
+        state=app.read(state_path);state['framework_commit']='b'*40;app.write(state_path,state)
+        self.arguments.refresh_export=True
+        result=preview.run(self.work,self.project,self.arguments,app,lambda *a:self.fail('No generation during export refresh'))
+        self.assertEqual(result['model_calls'],1)
+        self.assertEqual(app.read(state_path)['generation_framework_commit'],'b'*40)
