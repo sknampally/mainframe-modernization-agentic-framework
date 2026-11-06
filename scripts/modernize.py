@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import kiro_workflow as kw
 from pilot import Blocked, git, require, sha
 from modernize_artifacts import digest, validate_spec, validate_screens, render_site, render_assessment_facts, SECTIONS
-from modernize_models import call as model_call
+from modernize_models import call as model_call, ProviderSafetyRefusal, check_provider_refusals, preparation_protocol_hash
 
 FRAMEWORK = Path(__file__).resolve().parent.parent
 
@@ -350,8 +350,13 @@ def verify_source(project):
 
 def upgrade_framework(work, project, args):
     """Record a reviewed controller fix without replacing source, jobs or evidence."""
-    require(not project.get('approvals') and not project.get('pipeline'),
-            'Framework upgrades are supported only before assessment approval')
+    require(not (set(project.get('approvals', {})) - {'assessment'}) and not project.get('specification')
+            and not project.get('pipeline', {}).get('candidate_sha256'),
+            'Framework upgrades require no candidate or downstream approvals')
+    if project.get('approvals', {}).get('assessment'):
+        require(project.get('selected') in project['assessments'], 'Approved assessment identity is missing')
+        verified_assessment(project, project['selected'])
+        approved(project, 'assessment', project['assessments'][project['selected']]['sha256'])
     current = git(FRAMEWORK, 'rev-parse', 'HEAD')
     # Validate the pinned source and clean current code before recording a new baseline.
     verify_source({**project, 'framework_commit': current})
@@ -655,6 +660,99 @@ def decision(work, project, args):
     return {'status': project['stage']}
 
 
+def recover_provider_request(work, project, args):
+    """Record explicit review of one refusal before a revised, evidence-only request."""
+    require(project['stage'] == 'PROVIDER_REVIEW_REQUIRED' and not project.get('specification'),
+            'Recovery requires a saved provider refusal and no completed candidate')
+    require(args.by.strip() and args.note.strip(), 'Named owner and reviewed correction required')
+    require(re.fullmatch(r'provider-[0-9]+\.json', args.receipt), 'Select one provider receipt basename')
+    area = work / 'preparation'; receipt = area / args.receipt
+    require(receipt.is_file(), 'Provider receipt not found')
+    data = read(receipt); envelope = json.loads(data.get('stdout','{}'))
+    require(data.get('provider') == 'claude' and envelope.get('is_error')
+            and '[reasoning_extraction]' in str(envelope.get('result','')),
+            'Only the reviewed reasoning-extraction refusal supports this request correction')
+    request = area / args.receipt.replace('provider-', 'provider-request-')
+    old_request = read(request).get('message','') if request.exists() else ''
+    require(not old_request or '"evidence_notes"' not in old_request,
+            'Revised evidence-only request was already refused; provider review is required')
+    protocol = (FRAMEWORK/'prompts/pipeline/executor.md').read_text()
+    require('evidence_notes' in protocol and 'private chain-of-thought' in protocol,
+            'Install the evidence-only protocol before recovery')
+    verify_source(project)
+    verified_assessment(project, project['selected'])
+    approved(project,'assessment',project['assessments'][project['selected']]['sha256'])
+    recovery_path = area/'provider-recovery.json'
+    recovery = read(recovery_path) if recovery_path.exists() else {}
+    require(args.receipt not in recovery, 'This refusal has already been reviewed; no repeated recovery')
+    record = {'receipt_sha256':sha(receipt),'protocol_sha256':preparation_protocol_hash(),
+              'by':args.by,'note':args.note,'at':time.time()}
+    recovery[args.receipt] = record; write(recovery_path,recovery)
+    project.setdefault('events',[]).append({'event':'provider_request_corrected','receipt':args.receipt,**record})
+    project['pipeline']['status'] = 'RUNNING'
+    project['pipeline'].pop('reason',None)
+    project['stage'] = 'RUNNING_' + project['pipeline']['role'].upper()
+    persist(work,project)
+    return {'status':'REVISED_REQUEST_READY','calls_consumed':project['pipeline']['calls'],
+            'next_step':'modernize resume; new provider refusals still stop automatically'}
+
+
+def set_model_budget(work, project, args):
+    require(args.by.strip() and args.note.strip(), 'Named owner and budget rationale required')
+    require(not project.get('specification') and not (set(project.get('approvals',{})) - {'assessment'}),
+            'Model budget changes require an unfinished preparation phase')
+    current = project['settings']['max_model_calls']
+    consumed = project.get('pipeline',{}).get('calls',0)
+    require(consumed < args.max_calls <= 256, 'Total call cap must exceed consumed calls and be at most 256')
+    project['settings']['max_model_calls'] = args.max_calls
+    project.setdefault('events',[]).append({'event':'model_budget_changed','at':time.time(),
+        'from':current,'to':args.max_calls,'consumed':consumed,'by':args.by,'note':args.note})
+    state = project.get('pipeline',{})
+    if state.get('reason') == 'Total model call budget exhausted':
+        state['status']='RUNNING';state.pop('reason',None)
+        project['stage']='RUNNING_' + state['role'].upper()
+    persist(work,project)
+    return {'status':'MODEL_BUDGET_RECORDED','total_cap':args.max_calls,'calls_consumed':consumed,
+            'next_step':'modernize resume'}
+
+
+def assessment_catalog(run):
+    """Expose useful labels without flooding model context with evidence hashes."""
+    mapped = {}
+    for original in run.get('assessment_originals', []):
+        key = original.get('source', {}).get('assetKey', '')
+        for text in original.get('text_files', []):
+            mapped[text['file']] = (key, text.get('member', ''))
+    result = []
+    for item in run['assessment_index']:
+        key, member = mapped.get(item['path'], ('', item['path']))
+        if '/logs/' in key or member.lower().endswith('.log') or item['path'] == 'original-artifacts.json':
+            continue
+        if member.lower().endswith('.html'):
+            continue  # matching structured rules remain available; originals are retained
+        result.append({'path':item['path'], 'bytes':item['bytes'],
+                       'label':member or Path(key).name or item['path']})
+    return result
+
+
+def bounded_preparation_context(context, limit):
+    """Retain recent verbatim reads; explicitly index older reads instead of silently truncating."""
+    context = dict(context)
+    original = context['history']
+    context['history'] = [{**entry, 'request':{k:v for k,v in entry['request'].items()
+                            if k in {'kind','area','paths','start','end'}}} for entry in original]
+    omitted = []
+    while len(json.dumps(context).encode()) > limit and context['history']:
+        entry = context['history'].pop(0)
+        omitted.append({'request':entry['request'], 'files':[{'area':x['area'],'path':x['path']}
+                         for x in entry.get('response', [])]})
+        context['earlier_reads'] = omitted
+        context['context_notice'] = 'Earlier read bodies were omitted to fit the context limit. Their full receipts remain saved. Request exact ranges again when needed; omission is not evidence.'
+    message = json.dumps(context)
+    require(len(message.encode()) <= limit, 'Preparation catalog/candidate exceeds context limit')
+    return message
+
+
 def pipeline(work, project, args, runtime=model_call):
     verify_source(project)
     validate_model_pair(project['providers']['executor'], project['settings'])
@@ -668,6 +766,7 @@ def pipeline(work, project, args, runtime=model_call):
         return {'status': project['stage'], 'specification': project['specification']}
     area = work / 'preparation'
     area.mkdir(exist_ok=True, mode=0o700)
+    check_provider_refusals(area)
     while state['calls'] < project['settings']['max_model_calls']:
         role, number = state['role'], state['round']
         key = f'{number}:{role}'
@@ -676,17 +775,29 @@ def pipeline(work, project, args, runtime=model_call):
                    role_reads=state['reads'], events=[])
         context = {'protocol': (FRAMEWORK / 'prompts/pipeline' / (role + '.md')).read_text(),
             'scope': project['scope'], 'source': {k: v for k, v in project['source'].items() if k != 'root'},
-            'source_files': kw.inventory(run), 'assessment_files': assessment_run['assessment_index'],
+            'source_files': kw.inventory(run), 'assessment_files': assessment_catalog(assessment_run),
             'assessment_provenance': assessment_run.get('assessment_provenance'), 'history': history,
-            'feedback': project.get('feedback', []), 'decisions': project['decisions']}
+            'feedback': project.get('feedback', []), 'decisions': project['decisions'],
+            'remaining_model_calls': project['settings']['max_model_calls'] - state['calls'],
+            'evidence_notes': state.get('evidence_notes', {}).get(key, [])}
+        prior_reply = next((area / f'reply-{n}.json' for n in range(state['calls'], 0, -1)
+                            if (area / f'reply-{n}.json').exists()), None)
+        if role == 'executor' and prior_reply is not None:
+            prior = read(prior_reply)
+            if prior.get('kind') == 'candidate':
+                try:
+                    validate_spec(prior.get('specification'), Path(project['source']['root']))
+                except Blocked as error:
+                    context['candidate_correction'] = {'error': str(error),
+                        'instruction': 'Return a complete corrected candidate. All evidence and review requirements still apply.',
+                        'rejected_specification': prior.get('specification')}
         if role == 'reviewer':
             candidate_path = area / f'candidate-{number}.json'
             require(sha(candidate_path) == state['candidate_sha256'], 'Candidate changed after handoff')
             context['candidate'] = read(candidate_path)
         if state.get('previous_review'):
             context['previous_review'] = state['previous_review']
-        message = json.dumps(context)
-        require(len(message.encode()) <= project['settings']['max_context_bytes'], 'Context limit reached; narrow the slice or adjust saved settings')
+        message = bounded_preparation_context(context, project['settings']['max_context_bytes'])
         state['calls'] += 1
         run['model_calls'] = state['calls']
         project['stage'] = 'RUNNING_' + role.upper()
@@ -694,8 +805,24 @@ def pipeline(work, project, args, runtime=model_call):
         reply = runtime(project['providers'][role], run, area, role, message)
         verify_source(project)
         write(area / f'reply-{state["calls"]}.json', reply)
+        if 'evidence_notes' in reply:
+            notes = reply['evidence_notes']
+            require(isinstance(notes, list) and len(json.dumps(notes).encode()) <= 12000
+                    and all(isinstance(n,dict) and set(n) == {'statement','source_path','source_anchor','status'}
+                        and all(isinstance(v,str) and v.strip() for v in n.values())
+                        and n['status'] in {'SOURCE_VERIFIED','INFERRED','UNKNOWN'} for n in notes),
+                    'Evidence notes must be bounded factual assertions with citations and status')
+            state.setdefault('evidence_notes', {})[key] = notes
         if reply.get('kind') == 'read':
-            history.append({'request': reply, 'response': kw.source_read(run, assessment_dir, role, reply)})
+            try:
+                chunks = kw.source_read(run, assessment_dir, role, reply)
+                history.append({'request':reply, 'response':chunks})
+            except Blocked as error:
+                if str(error) not in {'Read result exceeds byte budget; request fewer lines',
+                                      'Read ranges require positive start/end and at most 500 lines',
+                                      'Read request must name one to five paths'}:
+                    raise
+                history.append({'request':reply, 'response':[], 'read_error':str(error)})
             state['reads'] = run['role_reads']
         elif reply.get('kind') == 'blocked':
             state['status'], project['stage'] = 'BLOCKED', 'BLOCKED'
@@ -703,8 +830,14 @@ def pipeline(work, project, args, runtime=model_call):
             break
         elif role == 'executor' and reply.get('kind') == 'candidate':
             require(state['reads'].get(key), 'Executor must inspect source')
-            require(any(x['request'].get('area') == 'assessment' for x in history), 'Executor must inspect assessment findings')
-            validate_spec(reply.get('specification'), Path(project['source']['root']))
+            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history), 'Executor must inspect assessment findings')
+            try:
+                validate_spec(reply.get('specification'), Path(project['source']['root']))
+            except Blocked as error:
+                project.setdefault('events', []).append({'event': 'candidate_validation_failed',
+                    'at': time.time(), 'call': state['calls'], 'reason': str(error)})
+                persist(work, project)
+                continue
             read_paths = {chunk['path'] for entry in history for chunk in entry['response'] if chunk['area'] == 'source'}
             require({rule['source_path'] for rule in reply['specification']['rules']} <= read_paths,
                     'Executor must inspect every rule source file')
@@ -713,7 +846,7 @@ def pipeline(work, project, args, runtime=model_call):
             state['role'] = 'reviewer'
         elif role == 'reviewer' and reply.get('kind') == 'review':
             require(state['reads'].get(key), 'Reviewer must independently inspect source')
-            require(any(x['request'].get('area') == 'assessment' for x in history), 'Reviewer must inspect assessment findings')
+            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history), 'Reviewer must inspect assessment findings')
             require(reply.get('decision') in {'PASS', 'REWORK', 'BLOCKED'} and isinstance(reply.get('findings'), list)
                     and isinstance(reply.get('report'), str) and reply['report'].strip(), 'Invalid reviewer decision')
             write(area / f'review-{number}.json', reply)
@@ -999,9 +1132,17 @@ def parser():
         a.add_argument('--detach', action='store_true')
         a.add_argument('--attach-job')
     commands.add_parser('status')
+    budget = commands.add_parser('model-budget', help='Record an explicit total preparation model-call cap')
+    budget.add_argument('--max-calls', required=True, type=int)
+    budget.add_argument('--by', required=True)
+    budget.add_argument('--note', required=True)
+    recovery = commands.add_parser('recover-provider', help='Record review of a reasoning-extraction refusal before an evidence-only retry')
+    recovery.add_argument('--receipt', required=True)
+    recovery.add_argument('--by', required=True)
+    recovery.add_argument('--note', required=True)
     report = commands.add_parser('assessment-report', help='Generate a private HTML index of sealed assessment evidence')
     report.add_argument('--label')
-    upgrade = commands.add_parser('upgrade-framework', help='Record a controller update before assessment approval; preserve jobs and evidence')
+    upgrade = commands.add_parser('upgrade-framework', help='Record a controller update before candidate handoff; preserve approved evidence')
     upgrade.add_argument('--note', required=True)
     scope = commands.add_parser('scope', help='Record explicit scope for an existing uploaded assessment')
     scope.add_argument('--label')
@@ -1103,14 +1244,16 @@ def main(argv=None, reporter=None):
                         else: result = review_site(work, project, SimpleNamespace(provider=pending.get('provider')))
                         project.pop('pending_action', None)
                         persist(work, project)
-                    elif args.command == 'resume' and project['stage'] in {'ASSESSMENT_APPROVED', 'REVISION_PENDING', 'RUNNING_EXECUTOR', 'RUNNING_REVIEWER'}:
+                    elif args.command == 'resume' and (project['stage'] in {'ASSESSMENT_APPROVED', 'REVISION_PENDING', 'RUNNING_EXECUTOR', 'RUNNING_REVIEWER'} or (project['stage'] == 'WAITING_FOR_RUNTIME' and project.get('pipeline'))):
                         result = pipeline(work, project, args)
                     elif args.command == 'resume' and project['stage'] == 'VALIDATION_APPROVED':
                         result = review_site(work, project, SimpleNamespace(provider=None))
                     elif args.command == 'resume' and project['stage'] == 'SPECIFICATIONS_APPROVED':
                         result = package(work, project)
-                    elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED'}:
+                    elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
+                    elif args.command == 'model-budget': result = set_model_budget(work, project, args)
+                    elif args.command == 'recover-provider': result = recover_provider_request(work, project, args)
                     elif args.command == 'assessment-report': result = assessment_report(work, project, args)
                     elif args.command == 'upgrade-framework': result = upgrade_framework(work, project, args)
                     elif args.command == 'setup': result = setup(work, project, args)
@@ -1131,6 +1274,11 @@ def main(argv=None, reporter=None):
                         persist(work, project)
                 except KeyboardInterrupt:
                     # Retain budgets and phase markers while still holding the project lock.
+                    persist(work, project)
+                    raise
+                except ProviderSafetyRefusal as error:
+                    project['stage'] = 'PROVIDER_REVIEW_REQUIRED'
+                    project['pipeline'].update(status='PROVIDER_REVIEW_REQUIRED', reason=str(error))
                     persist(work, project)
                     raise
                 except kw.RuntimeUnavailable:

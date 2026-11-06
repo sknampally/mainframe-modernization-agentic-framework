@@ -18,6 +18,71 @@ import pilot
 
 
 class PreparationTests(unittest.TestCase):
+    def test_model_budget_change_retains_consumed_calls_and_does_not_clear_refusal(self):
+        self.project['pipeline']={'calls':10,'role':'executor','status':'PROVIDER_REVIEW_REQUIRED'}
+        self.project['stage']='PROVIDER_REVIEW_REQUIRED'
+        result=app.set_model_budget(self.work,self.project,argparse.Namespace(max_calls=64,by='Fixture owner',note='Full scope'))
+        self.assertEqual(result['calls_consumed'],10)
+        self.assertEqual(self.project['stage'],'PROVIDER_REVIEW_REQUIRED')
+        self.assertEqual(self.project['events'][-1]['to'],64)
+        with self.assertRaises(app.Blocked):
+            app.set_model_budget(self.work,self.project,argparse.Namespace(max_calls=10,by='Fixture owner',note='invalid'))
+
+    def test_reviewed_request_correction_retains_refusal_and_stops_on_new_refusal(self):
+        self.baseline()
+        area=self.work/'preparation';area.mkdir()
+        refusal={'provider':'claude','stdout':json.dumps({'is_error':True,'result':'safeguards flagged [reasoning_extraction]'})}
+        app.write(area/'provider-10.json',refusal)
+        self.project['stage']='PROVIDER_REVIEW_REQUIRED'
+        self.project['pipeline']={'calls':10,'role':'executor','status':'PROVIDER_REVIEW_REQUIRED'}
+        approvals=copy.deepcopy(self.project['approvals'])
+        args=argparse.Namespace(receipt='provider-10.json',by='Fixture owner',note='Replace free-form notes with cited findings')
+        result=app.recover_provider_request(self.work,self.project,args)
+        self.assertEqual(result['calls_consumed'],10)
+        self.assertEqual(self.project['approvals'],approvals)
+        self.assertEqual(app.read(area/'provider-10.json'),refusal)
+        models.check_provider_refusals(area)
+        with self.assertRaises(app.Blocked): app.recover_provider_request(self.work,self.project,args)
+        app.write(area/'provider-11.json',refusal)
+        with self.assertRaises(app.ProviderSafetyRefusal): models.check_provider_refusals(area)
+
+    def test_saved_provider_safeguard_refusal_blocks_without_new_model_calls(self):
+        self.baseline()
+        area=self.work/'preparation';area.mkdir()
+        app.write(area/'provider-1.json', {'provider':'claude','stdout':json.dumps({
+            'is_error':True,'result':'Safeguards flagged this message [reasoning_extraction]'})})
+        with self.assertRaises(app.ProviderSafetyRefusal):
+            app.pipeline(self.work,self.project,self.args('validate'),
+                         runtime=lambda *args: self.fail('Must not retry refused request'))
+        self.assertEqual(self.project['pipeline']['calls'],0)
+
+    def test_preparation_context_compacts_without_mutating_read_receipts(self):
+        history = [{'request':{'area':'source','paths':[str(n)]}, 'response':[
+            {'area':'source','path':str(n),'text':str(n)*2000}]} for n in range(3)]
+        history[0]['request']['notes'] = 'private planning text must not be replayed'
+        original = copy.deepcopy(history)
+        message = app.bounded_preparation_context({'history':history,'working_notes':'Claim to verify'},3500)
+        decoded = json.loads(message)
+        self.assertLessEqual(len(message.encode()),3500)
+        self.assertEqual(history,original)
+        self.assertNotIn('private planning text',message)
+        self.assertIn('earlier_reads',decoded)
+        self.assertEqual(decoded['history'][-1]['response'][0]['path'],'2')
+
+    def test_assessment_catalog_names_evidence_and_omits_logs(self):
+        run = {'assessment_index':[{'path':'a.txt','bytes':10},{'path':'b.txt','bytes':20}],
+               'assessment_originals':[{'source':{'assetKey':'job/logs/run.log'},'text_files':[{'file':'a.txt','member':'run.log'}]},
+                {'source':{'assetKey':'job/results/rules.zip'},'text_files':[{'file':'b.txt','member':'program/rules.json'}]}]}
+        self.assertEqual(app.assessment_catalog(run),[{'path':'b.txt','bytes':20,'label':'program/rules.json'}])
+
+    def test_controller_upgrade_preserves_verified_assessment_approval(self):
+        self.baseline()
+        before = copy.deepcopy(self.project['approvals'])
+        self.project['pipeline'] = {'calls':2,'contexts':{'executor':[]}}
+        app.upgrade_framework(self.work,self.project,argparse.Namespace(note='Controller fix'))
+        self.assertEqual(self.project['approvals'],before)
+        self.assertEqual(self.project['pipeline']['calls'],2)
+
     def test_framework_upgrade_retains_assessment_and_audits_change(self):
         self.project['framework_commit'] = 'b' * 40
         directory = self.work / 'existing-run'
@@ -35,7 +100,7 @@ class PreparationTests(unittest.TestCase):
 
     def test_framework_upgrade_rejects_approved_or_dirty_project(self):
         self.project['approvals']['assessment'] = {'sha256':'approved'}
-        with self.assertRaisesRegex(app.Blocked,'before assessment approval'):
+        with self.assertRaises(app.Blocked):
             app.upgrade_framework(self.work,self.project,argparse.Namespace(note='fix'))
         self.project['approvals'].clear();self.dirty=True
         with self.assertRaises(app.Blocked):
@@ -140,6 +205,21 @@ class PreparationTests(unittest.TestCase):
             self.assertTrue(all(not x.endswith(('.cs', '.tf')) for x in archive.namelist()))
             self.assertEqual(json.loads(archive.read('traceability.json'))['tests'][0]['status'], 'NOT RUN')
         self.assertEqual(self.project['stage'], 'PACKAGED')
+
+    def test_invalid_candidate_gets_correction_without_bypassing_review(self):
+        self.baseline()
+        replies = self.replies()
+        invalid = copy.deepcopy(replies[2])
+        del invalid['specification']['monorepo_layout']
+        replies.insert(2, invalid)
+        result = app.pipeline(self.work, self.project, self.args('validate'), self.runtime(replies))
+        self.assertEqual(result['calls'], 7)
+        self.assertEqual(result['status'], 'AWAITING_VALIDATION_APPROVAL')
+        correction = self.messages[3][2]['candidate_correction']
+        self.assertIn('array of strings', correction['error'])
+        self.assertNotIn('monorepo_layout', correction['rejected_specification'])
+        self.assertTrue((self.work/'preparation/reply-3.json').exists())
+        self.assertEqual(self.project['pipeline']['role'], 'reviewer')
 
     def test_preparation_produces_html_before_human_validation(self):
         self.validated()

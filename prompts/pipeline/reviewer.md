@@ -25,3 +25,15 @@ confirm runtime equivalence or permit deployment. PASS requires no outstanding
 reviewer defects (empty findings). Clearly marked legitimate SME questions may
 remain for the separate human gate. REWORK includes actionable findings. BLOCKED
 identifies evidence that cannot currently be obtained. All tests remain NOT RUN.
+
+Assessment inventory labels identify original AWS reports. Prefer inventories,
+missing dependencies, issue reports, structured business rules and relevant source;
+do not spend calls reading operational logs. The controller may omit older read
+bodies with an explicit earlier_reads index. You may return `evidence_notes` as an
+array of factual assertions: {statement,source_path,source_anchor,status}, where
+status is SOURCE_VERIFIED, INFERRED or UNKNOWN. Limit the array to 12000 UTF-8 bytes.
+These are reviewable findings, not private chain-of-thought. Do not provide internal
+reasoning, scratchpads, deliberation, or internal call plans. Return concise results,
+source citations, missing evidence and decisions only. The controller preserves
+these citations; reread source ranges where needed. Do not silently narrow the
+controller's selected scope to a single journey.

@@ -400,7 +400,7 @@ errors for private troubleshooting and safe reconciliation.
 ### Applying a controller fix during an assessment
 
 Stop the local watcher before updating Reframe; the AWS job remains intact. From a
-clean committed framework checkout, before any assessment approval, run:
+clean committed framework checkout, before a preparation candidate or downstream approval exists, run:
 
 ```bash
 modernize upgrade-framework --note "Describe the controller fix being applied"
@@ -409,7 +409,7 @@ modernize resume --wait
 
 This validates source integrity and records the old and new framework revisions in
 both project and run history. It preserves job identity, evidence and mutation
-receipts. It refuses upgrades after approval or while job creation is uncertain.
+receipts. It refuses upgrades after a preparation candidate or downstream approval, or while job creation is uncertain. An existing assessment approval is retained only after verifying its exact evidence fingerprint and original files.
 It does not change the assessment scope or approve findings. A run with such an
 upgrade must disclose that it used multiple controller revisions.
 
@@ -449,3 +449,46 @@ missing-dependency row counts. Source links identify each input; duplicate rows
 are not silently treated as unique files or issue categories. AWS documentation
 summaries, when supplied, are displayed verbatim under an expandable section and
 labeled as AWS-generated. No LLM is called to produce or rewrite this summary.
+
+Preparation agents receive descriptive evidence labels and a bounded rolling read
+context. Full read receipts stay private; omitted older bodies are explicitly
+indexed and can be requested again. Per-role cited findings are model claims, not
+new evidence. Read-size errors return corrective feedback within the same recorded
+call budget. An upgrade does not reset consumed calls or grant further approval.
+
+If a provider declines a request under its safeguards, Reframe records
+`PROVIDER_REVIEW_REQUIRED` and stops automatic retries. This is not a reviewer
+finding, authentication failure or approval. Inspect the private provider receipt
+and request content before deciding how to resolve it. Requests are saved privately
+for subsequent calls; existing assessment approval and consumed call counts remain.
+
+### Correcting an unintended reasoning request
+
+The preparation protocol requests structured findings and source citations, not
+private reasoning, scratchpads or call plans. Historical free-form notes remain in
+private receipts but are not replayed to providers. After inspecting a recorded
+`reasoning_extraction` refusal and correcting the output contract, an authorized
+operator can record the review with `modernize recover-provider --receipt
+provider-N.json --by "Owner" --note "Reviewed correction"`, then resume. This keeps
+the original refusal, hashes the reviewed receipt and revised protocol, and retains
+approval and consumed calls. A refusal of the revised request stops again; this
+command cannot repeatedly clear it. It does not disable provider safeguards.
+
+### Changing the preparation call cap
+
+With the run owner's authorization, use:
+
+```bash
+modernize model-budget --max-calls 64 --by "Run owner" --note "Approved additional assessment coverage"
+modernize resume
+```
+
+This sets the total cap, not an additional allowance. Consumed calls remain counted,
+and the change records the owner, rationale, old cap and new cap. It does not change
+the Claude subscription, buy credits, clear a provider refusal or approve findings.
+A call count limits requests; it is not a token or monetary estimate. Provider usage
+limits still apply. Never change the cap simply to conceal repeated failures.
+
+An invalid structured candidate is retained privately and returned to the executor
+with validation feedback. Correction attempts consume the same total budget. Only
+a valid candidate can proceed to independent review; correction is not approval.
