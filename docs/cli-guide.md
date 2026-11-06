@@ -550,3 +550,17 @@ with explicit references. Conflicting values remain separate. Projection line
 numbers refer to pointer records, never to original JSON file lines; originals stay
 sealed. Agents can request bounded primary-source supplements for dependencies and
 reconciliation. These reads remain attached to the unit and consume the same budget.
+
+A blocked unit can receive owner-attributed feedback without reopening passed units:
+
+```bash
+modernize feedback --unit U0001 --by "Run owner" --note "Clarification for the missing evidence"
+modernize resume
+```
+
+This remains bounded by the unit revision limit and total call cap. Feedback does
+not turn an SME statement into source evidence, clear a provider refusal, or reset
+consumed calls. Once a unit exhausts its revision limit, inspect the cause instead
+of repeatedly retrying. The planner's range coverage does not prove that a model
+identified every business rule within those ranges; integration review and explicit
+coverage gaps remain necessary.

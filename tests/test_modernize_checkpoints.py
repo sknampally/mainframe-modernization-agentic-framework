@@ -257,3 +257,20 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(self.project['checkpoints']['units']['U0001']['attempt'],2)
         self.assertEqual(self.project['stage'],'RUNNING_EXECUTOR')
         self.assertEqual(set(self.project['approvals']),{'assessment'})
+
+    def test_pointer_projection_round_trip_preserves_container_types_and_references(self):
+        original={'object':{'0':True,'nested':[]},'array':[{'0':True,'nested':[]},None,3.5], 'escaped/key~':'value'}
+        values={}
+        for line in cp.json_projection(original):
+            row=json.loads(line)
+            pointer=row['pointer']
+            if 'same_value_as' in row: value=copy.deepcopy(values[row['same_value_as']])
+            elif 'container' in row: value={} if row['container']=='object' else []
+            else: value=row['value']
+            values[pointer]=value
+            if pointer:
+                parent,token=pointer.rsplit('/',1)
+                key=token.replace('~1','/').replace('~0','~')
+                if isinstance(values[parent],list): values[parent].append(value)
+                else: values[parent][key]=value
+        self.assertEqual(values[''],original)
