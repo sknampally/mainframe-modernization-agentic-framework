@@ -1255,6 +1255,14 @@ def parser():
     commands.add_parser('status')
     planning = commands.add_parser('prepare-plan', help='Plan bounded evidence units without model calls')
     planning.add_argument('--activate', action='store_true', help='Archive stopped legacy preparation and use the plan; retain budgets and approvals')
+
+    preview = commands.add_parser('preview', help='Generate AWS-assumed draft wireframes and AI-DLC package without independent validation')
+    preview.add_argument('--skip-validation', action='store_true', required=True)
+    preview.add_argument('--by', required=True)
+    preview.add_argument('--note', required=True)
+    preview.add_argument('--provider', choices=['claude','codex'], default='codex')
+    preview.add_argument('--name', default='transform-direct')
+    preview.add_argument('--refresh-export', action='store_true', help='Re-export a verified saved design after a CLI update, without new model calls')
     budget = commands.add_parser('model-budget', help='Record an explicit total preparation model-call cap')
     budget.add_argument('--max-calls', required=True, type=int)
     budget.add_argument('--by', required=True)
@@ -1382,6 +1390,10 @@ def main(argv=None, reporter=None):
                     elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED', 'BLOCKED', 'REWORK_LIMIT'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
                     elif args.command == 'prepare-plan': result = preparation_plan(work, project, args)
+
+                    elif args.command == 'preview':
+                        import modernize_preview
+                        result = modernize_preview.run(work, project, args, sys.modules[__name__])
                     elif args.command == 'model-budget': result = set_model_budget(work, project, args)
                     elif args.command == 'recover-provider': result = recover_provider_request(work, project, args)
                     elif args.command == 'assessment-report': result = assessment_report(work, project, args)
@@ -1407,11 +1419,13 @@ def main(argv=None, reporter=None):
                     persist(work, project)
                     raise
                 except ProviderSafetyRefusal as error:
+                    if args.command == 'preview': raise
                     project['stage'] = 'PROVIDER_REVIEW_REQUIRED'
                     project['pipeline'].update(status='PROVIDER_REVIEW_REQUIRED', reason=str(error))
                     persist(work, project)
                     raise
                 except kw.RuntimeUnavailable:
+                    if args.command == 'preview': raise
                     project['stage'] = 'WAITING_FOR_RUNTIME'
                     persist(work, project)
                     raise
