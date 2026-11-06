@@ -493,6 +493,78 @@ An invalid structured candidate is retained privately and returned to the execut
 with validation feedback. Correction attempts consume the same total budget. Only
 a valid candidate can proceed to independent review; correction is not approval.
 
+### Checkpointed preparation
+
+New validation runs plan bounded evidence units before calling a model. Each unit
+contains pinned source or sealed assessment ranges. The executor returns concise
+findings with exact quotations, coverage and owned SME questions. The controller
+checks quotations against the supplied text; the independent reviewer receives the
+same ranges freshly loaded from disk. A PASS seals that unit's candidate and review.
+Restarting skips completed units, retains consumed calls and checks their hashes.
+Three malformed replies stop that unit rather than spending the entire budget.
+
+Preview the workload without model or cloud calls:
+
+```bash
+modernize prepare-plan
+```
+
+This saves a private JSON manifest and a human-readable `preparation-plan.html`.
+The minimum call estimate includes two calls per unit plus two for synthesis and
+integration review. It is a lower bound, not a promise or a monetary estimate.
+Validation stops before spending calls if the remaining cap is below that minimum.
+The existing `model-budget` command requires an explicit owner and rationale; it
+never changes a cap automatically. Small default caps may be insufficient for a
+whole repository. Do not keep increasing them without inspecting the plan.
+
+For an existing **stopped** legacy preparation attempt, explicitly migrate with:
+
+```bash
+modernize prepare-plan --activate
+```
+
+Migration archives the old pipeline state, retains provider receipts, drafts,
+assessment approval and consumed calls, and records the current framework revision.
+It starts no model calls or AWS jobs. It cannot migrate a completed specification
+or bypass a provider refusal. New synthesized candidates use separate filenames.
+
+After all units pass, synthesis receives their durable quoted findings. It must
+preserve every checkpoint business-rule ID and every unresolved SME question.
+An independent integration review still precedes SME/architect approval. Unit PASS
+is not whole-repository approval and does not establish runtime equivalence.
+Opaque/binary evidence and oversized individual lines remain explicit SME gaps.
+Operational logs and duplicate HTML excluded from the model catalog remain sealed.
+
+**Current limit:** evidence units are bounded by bytes and line ranges, not inferred
+business boundaries. Cross-unit dependencies remain explicit review obligations.
+The final synthesis must fit the configured context limit. If the combined reviewed
+findings exceed it, the controller stops before a model call; it never silently drops
+them. Hierarchical synthesis for larger repositories is not implemented. This is a
+checkpoint/recovery improvement, not a claim of unlimited repository-scale support.
+
+The planner pairs reports with source using exact member paths or unique matching
+filenames. Ambiguous matches remain unpaired. Identical assessment files are listed
+as hash-verified aliases, not separately reviewed copies. For JSON, deterministic
+pointer records preserve parsed values and replace exactly repeated objects/arrays
+with explicit references. Conflicting values remain separate. Projection line
+numbers refer to pointer records, never to original JSON file lines; originals stay
+sealed. Agents can request bounded primary-source supplements for dependencies and
+reconciliation. These reads remain attached to the unit and consume the same budget.
+
+A blocked unit can receive owner-attributed feedback without reopening passed units:
+
+```bash
+modernize feedback --unit U0001 --by "Run owner" --note "Clarification for the missing evidence"
+modernize resume
+```
+
+This remains bounded by the unit revision limit and total call cap. Feedback does
+not turn an SME statement into source evidence, clear a provider refusal, or reset
+consumed calls. Once a unit exhausts its revision limit, inspect the cause instead
+of repeatedly retrying. The planner's range coverage does not prove that a model
+identified every business rule within those ranges; integration review and explicit
+coverage gaps remain necessary.
+
 ### Use Transform findings directly for a draft
 
 An engineer who trusts the completed AWS assessment can explicitly skip independent

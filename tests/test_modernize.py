@@ -52,7 +52,7 @@ class PreparationTests(unittest.TestCase):
         app.write(area/'provider-1.json', {'provider':'claude','stdout':json.dumps({
             'is_error':True,'result':'Safeguards flagged this message [reasoning_extraction]'})})
         with self.assertRaises(app.ProviderSafetyRefusal):
-            app.pipeline(self.work,self.project,self.args('validate'),
+            app.legacy_pipeline(self.work,self.project,self.args('validate'),
                          runtime=lambda *args: self.fail('Must not retry refused request'))
         self.assertEqual(self.project['pipeline']['calls'],0)
 
@@ -180,7 +180,7 @@ class PreparationTests(unittest.TestCase):
 
     def validated(self):
         self.baseline()
-        return app.pipeline(self.work, self.project, self.args('validate'), self.runtime(self.replies()))
+        return app.legacy_pipeline(self.work, self.project, self.args('validate'), self.runtime(self.replies()))
 
     def site(self):
         self.validated()
@@ -212,7 +212,7 @@ class PreparationTests(unittest.TestCase):
         invalid = copy.deepcopy(replies[2])
         del invalid['specification']['monorepo_layout']
         replies.insert(2, invalid)
-        result = app.pipeline(self.work, self.project, self.args('validate'), self.runtime(replies))
+        result = app.legacy_pipeline(self.work, self.project, self.args('validate'), self.runtime(replies))
         self.assertEqual(result['calls'], 7)
         self.assertEqual(result['status'], 'AWAITING_VALIDATION_APPROVAL')
         correction = self.messages[3][2]['candidate_correction']
@@ -245,7 +245,7 @@ class PreparationTests(unittest.TestCase):
     def test_phase_one_stops_and_never_calls_agents(self):
         self.assertEqual(self.assess()['status'], 'AWAITING_ASSESSMENT_APPROVAL')
         with self.assertRaisesRegex(pilot.Blocked, 'Approve Phase 1'):
-            app.pipeline(self.work, self.project, self.args('validate'), lambda *a: self.fail('No model before approval'))
+            app.legacy_pipeline(self.work, self.project, self.args('validate'), lambda *a: self.fail('No model before approval'))
 
     def test_existing_findings_require_source_match_attestation(self):
         self.assess()
@@ -355,7 +355,7 @@ class PreparationTests(unittest.TestCase):
         directory = Path(self.project['assessments']['a']['directory'])
         (directory / 'assessment/rules.json').write_text('{}')
         with self.assertRaisesRegex(pilot.Blocked, 'changed'):
-            app.pipeline(self.work, self.project, self.args('validate'))
+            app.legacy_pipeline(self.work, self.project, self.args('validate'))
 
     def test_claude_reviewer_gets_fresh_context(self):
         self.validated()
@@ -368,17 +368,17 @@ class PreparationTests(unittest.TestCase):
         self.baseline()
         replies = self.replies()
         with self.assertRaisesRegex(pilot.Blocked, 'independently'):
-            app.pipeline(self.work, self.project, self.args('validate'), self.runtime(replies[:3] + [replies[-1]]))
+            app.legacy_pipeline(self.work, self.project, self.args('validate'), self.runtime(replies[:3] + [replies[-1]]))
 
     def test_executor_cannot_skip_assessment_reads(self):
         self.baseline()
         replies = self.replies()
         with self.assertRaisesRegex(pilot.Blocked, 'assessment findings'):
-            app.pipeline(self.work, self.project, self.args('validate'), self.runtime([replies[0], replies[2]]))
+            app.legacy_pipeline(self.work, self.project, self.args('validate'), self.runtime([replies[0], replies[2]]))
 
     def test_automatic_rework_preserves_both_candidates(self):
         self.baseline()
-        app.pipeline(self.work, self.project, self.args('validate'), self.runtime(self.replies('REWORK') + self.replies()))
+        app.legacy_pipeline(self.work, self.project, self.args('validate'), self.runtime(self.replies('REWORK') + self.replies()))
         self.assertTrue((self.work / 'preparation/candidate-1.json').exists())
         self.assertTrue((self.work / 'preparation/candidate-2.json').exists())
         self.assertEqual(self.project['stage'], 'AWAITING_VALIDATION_APPROVAL')
@@ -386,7 +386,7 @@ class PreparationTests(unittest.TestCase):
     def test_call_budget_not_reset_by_resume(self):
         self.baseline()
         self.project['settings']['max_model_calls'] = 1
-        result = app.pipeline(self.work, self.project, self.args('validate'), self.runtime(self.replies()))
+        result = app.legacy_pipeline(self.work, self.project, self.args('validate'), self.runtime(self.replies()))
         self.assertEqual(result['status'], 'BLOCKED')
         self.assertEqual(self.project['pipeline']['calls'], 1)
 
@@ -394,7 +394,7 @@ class PreparationTests(unittest.TestCase):
         self.baseline()
         replies = self.replies()
         replies[2]['specification']['questions'] = [{'id':'Q1', 'question':'Oracle?', 'impact':'Unproven parity', 'owner':'SME', 'blocks':'Release'}]
-        app.pipeline(self.work, self.project, self.args('validate'), self.runtime(replies))
+        app.legacy_pipeline(self.work, self.project, self.args('validate'), self.runtime(replies))
         with self.assertRaisesRegex(pilot.Blocked, 'Q1'):
             self.approve('validation')
         app.decision(self.work, self.project, self.args('decide', '--question', 'Q1', '--by', 'SME', '--answer', 'Obtain legacy oracle before release', '--disposition', 'deferred'))
@@ -519,7 +519,7 @@ class PreparationTests(unittest.TestCase):
     def test_source_change_blocks_any_validation(self):
         self.baseline(); self.dirty = True
         with self.assertRaisesRegex(pilot.Blocked, 'not clean'):
-            app.pipeline(self.work, self.project, self.args('validate'))
+            app.legacy_pipeline(self.work, self.project, self.args('validate'))
 
     def test_lock_prevents_concurrent_mutation(self):
         with app.locked(self.work):
@@ -655,7 +655,7 @@ class PreparationTests(unittest.TestCase):
         self.baseline()
         def failing(*args): raise kw.RuntimeUnavailable('Fixture authentication failure')
         # Patch pipeline's supplied runtime rather than its bound default.
-        original = app.pipeline
+        original = app.legacy_pipeline
         def pipeline(work, project, args): return original(work, project, args, failing)
         with patch.object(app, 'pipeline', side_effect=pipeline), patch('builtins.print'):
             result = app.main(['--workspace',str(self.work),'validate'])
