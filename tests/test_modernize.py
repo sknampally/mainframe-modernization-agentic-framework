@@ -18,6 +18,16 @@ import pilot
 
 
 class PreparationTests(unittest.TestCase):
+    def test_model_budget_change_retains_consumed_calls_and_does_not_clear_refusal(self):
+        self.project['pipeline']={'calls':10,'role':'executor','status':'PROVIDER_REVIEW_REQUIRED'}
+        self.project['stage']='PROVIDER_REVIEW_REQUIRED'
+        result=app.set_model_budget(self.work,self.project,argparse.Namespace(max_calls=64,by='Fixture owner',note='Full scope'))
+        self.assertEqual(result['calls_consumed'],10)
+        self.assertEqual(self.project['stage'],'PROVIDER_REVIEW_REQUIRED')
+        self.assertEqual(self.project['events'][-1]['to'],64)
+        with self.assertRaises(app.Blocked):
+            app.set_model_budget(self.work,self.project,argparse.Namespace(max_calls=10,by='Fixture owner',note='invalid'))
+
     def test_reviewed_request_correction_retains_refusal_and_stops_on_new_refusal(self):
         self.baseline()
         area=self.work/'preparation';area.mkdir()
@@ -195,6 +205,21 @@ class PreparationTests(unittest.TestCase):
             self.assertTrue(all(not x.endswith(('.cs', '.tf')) for x in archive.namelist()))
             self.assertEqual(json.loads(archive.read('traceability.json'))['tests'][0]['status'], 'NOT RUN')
         self.assertEqual(self.project['stage'], 'PACKAGED')
+
+    def test_invalid_candidate_gets_correction_without_bypassing_review(self):
+        self.baseline()
+        replies = self.replies()
+        invalid = copy.deepcopy(replies[2])
+        del invalid['specification']['monorepo_layout']
+        replies.insert(2, invalid)
+        result = app.pipeline(self.work, self.project, self.args('validate'), self.runtime(replies))
+        self.assertEqual(result['calls'], 7)
+        self.assertEqual(result['status'], 'AWAITING_VALIDATION_APPROVAL')
+        correction = self.messages[3][2]['candidate_correction']
+        self.assertEqual(correction['error'], 'Proposed monorepo layout required')
+        self.assertNotIn('monorepo_layout', correction['rejected_specification'])
+        self.assertTrue((self.work/'preparation/reply-3.json').exists())
+        self.assertEqual(self.project['pipeline']['role'], 'reviewer')
 
     def test_preparation_produces_html_before_human_validation(self):
         self.validated()

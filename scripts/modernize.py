@@ -697,6 +697,25 @@ def recover_provider_request(work, project, args):
             'next_step':'modernize resume; new provider refusals still stop automatically'}
 
 
+def set_model_budget(work, project, args):
+    require(args.by.strip() and args.note.strip(), 'Named owner and budget rationale required')
+    require(not project.get('specification') and not (set(project.get('approvals',{})) - {'assessment'}),
+            'Model budget changes require an unfinished preparation phase')
+    current = project['settings']['max_model_calls']
+    consumed = project.get('pipeline',{}).get('calls',0)
+    require(consumed < args.max_calls <= 256, 'Total call cap must exceed consumed calls and be at most 256')
+    project['settings']['max_model_calls'] = args.max_calls
+    project.setdefault('events',[]).append({'event':'model_budget_changed','at':time.time(),
+        'from':current,'to':args.max_calls,'consumed':consumed,'by':args.by,'note':args.note})
+    state = project.get('pipeline',{})
+    if state.get('reason') == 'Total model call budget exhausted':
+        state['status']='RUNNING';state.pop('reason',None)
+        project['stage']='RUNNING_' + state['role'].upper()
+    persist(work,project)
+    return {'status':'MODEL_BUDGET_RECORDED','total_cap':args.max_calls,'calls_consumed':consumed,
+            'next_step':'modernize resume'}
+
+
 def assessment_catalog(run):
     """Expose useful labels without flooding model context with evidence hashes."""
     mapped = {}
@@ -761,6 +780,16 @@ def pipeline(work, project, args, runtime=model_call):
             'feedback': project.get('feedback', []), 'decisions': project['decisions'],
             'remaining_model_calls': project['settings']['max_model_calls'] - state['calls'],
             'evidence_notes': state.get('evidence_notes', {}).get(key, [])}
+        prior_reply = area / f'reply-{state["calls"]}.json'
+        if role == 'executor' and prior_reply.exists():
+            prior = read(prior_reply)
+            if prior.get('kind') == 'candidate':
+                try:
+                    validate_spec(prior.get('specification'), Path(project['source']['root']))
+                except Blocked as error:
+                    context['candidate_correction'] = {'error': str(error),
+                        'instruction': 'Return a complete corrected candidate. All evidence and review requirements still apply.',
+                        'rejected_specification': prior.get('specification')}
         if role == 'reviewer':
             candidate_path = area / f'candidate-{number}.json'
             require(sha(candidate_path) == state['candidate_sha256'], 'Candidate changed after handoff')
@@ -801,7 +830,13 @@ def pipeline(work, project, args, runtime=model_call):
         elif role == 'executor' and reply.get('kind') == 'candidate':
             require(state['reads'].get(key), 'Executor must inspect source')
             require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history), 'Executor must inspect assessment findings')
-            validate_spec(reply.get('specification'), Path(project['source']['root']))
+            try:
+                validate_spec(reply.get('specification'), Path(project['source']['root']))
+            except Blocked as error:
+                project.setdefault('events', []).append({'event': 'candidate_validation_failed',
+                    'at': time.time(), 'call': state['calls'], 'reason': str(error)})
+                persist(work, project)
+                continue
             read_paths = {chunk['path'] for entry in history for chunk in entry['response'] if chunk['area'] == 'source'}
             require({rule['source_path'] for rule in reply['specification']['rules']} <= read_paths,
                     'Executor must inspect every rule source file')
@@ -1096,6 +1131,10 @@ def parser():
         a.add_argument('--detach', action='store_true')
         a.add_argument('--attach-job')
     commands.add_parser('status')
+    budget = commands.add_parser('model-budget', help='Record an explicit total preparation model-call cap')
+    budget.add_argument('--max-calls', required=True, type=int)
+    budget.add_argument('--by', required=True)
+    budget.add_argument('--note', required=True)
     recovery = commands.add_parser('recover-provider', help='Record review of a reasoning-extraction refusal before an evidence-only retry')
     recovery.add_argument('--receipt', required=True)
     recovery.add_argument('--by', required=True)
@@ -1212,6 +1251,7 @@ def main(argv=None, reporter=None):
                         result = package(work, project)
                     elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
+                    elif args.command == 'model-budget': result = set_model_budget(work, project, args)
                     elif args.command == 'recover-provider': result = recover_provider_request(work, project, args)
                     elif args.command == 'assessment-report': result = assessment_report(work, project, args)
                     elif args.command == 'upgrade-framework': result = upgrade_framework(work, project, args)
