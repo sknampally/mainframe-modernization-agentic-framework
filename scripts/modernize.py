@@ -1031,7 +1031,21 @@ def feedback(work, project, args):
     require(args.by.strip() and args.note.strip(), 'Feedback needs an owner and content')
     require(project.get('pipeline'), 'No preparation candidate to revise')
     state = project['pipeline']
-    require(state['calls'] < project['settings']['max_model_calls'], 'Budget exhausted; start a new workspace with explicit limits')
+    require(project['stage'] != 'PROVIDER_REVIEW_REQUIRED', 'Provider refusals require explicit provider review, not feedback')
+    require(state['calls'] < project['settings']['max_model_calls'], 'Budget exhausted; record an explicitly approved model-budget change first')
+    if project.get('checkpoints') and project['checkpoints']['status'] != 'READY_FOR_SYNTHESIS':
+        unit_id = getattr(args, 'unit', None)
+        require(unit_id in project['checkpoints']['units'], 'Specify the blocked evidence unit with --unit')
+        unit = project['checkpoints']['units'][unit_id]
+        require(unit['status'] in {'BLOCKED', 'REWORK_LIMIT'}, 'Feedback can reopen only a blocked unit, not a passed unit')
+        require(unit['attempt'] < project['settings']['max_rounds'], 'Unit revision limit exhausted; inspect the plan and limits')
+        unit.setdefault('human_feedback', []).append({'by':args.by, 'note':args.note, 'at':time.time(),
+                                                      'previous_status':unit['status'], 'calls_consumed':state['calls']})
+        unit.update(status='PENDING', role='executor', attempt=unit['attempt']+1, invalid_replies=0)
+        state.update(status='RUNNING', role='executor'); state.pop('reason', None)
+        project['stage']='RUNNING_EXECUTOR'; persist(work, project)
+        return {'status':project['stage'], 'unit':unit_id, 'calls_consumed':state['calls']}
+
     project.setdefault('feedback', []).append({'by': args.by, 'note': args.note, 'at': time.time()})
     require(state['round'] < project['settings']['max_rounds'], 'Revision limit exhausted; start a new workspace')
     state.update(round=state['round'] + 1, role='executor', status='RUNNING')
@@ -1277,6 +1291,7 @@ def parser():
     u = commands.add_parser('review-site')
     u.add_argument('--provider', choices=['claude', 'codex'])
     f = commands.add_parser('feedback')
+    f.add_argument('--unit', help='Blocked evidence unit to revise; passed units remain sealed')
     f.add_argument('--by', required=True)
     f.add_argument('--note', required=True)
     commands.add_parser('package')

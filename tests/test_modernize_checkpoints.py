@@ -210,3 +210,50 @@ class CheckpointTests(unittest.TestCase):
         app.pipeline(self.work,self.project,self.args('validate'),self.runtime)
         self.assertEqual(sha(area/'candidate-1.json'),original)
         self.assertIn('checkpoint-candidate',self.project['specification']['path'])
+
+    def test_json_projection_preserves_conflicts_and_identifies_only_exact_duplicates(self):
+        value={'a':{'id':'R1','text':'same'}, 'b':{'id':'R1','text':'same'}, 'c':{'id':'R1','text':'different'}}
+        records=[json.loads(line) for line in cp.json_projection(value)]
+        self.assertIn({'pointer':'/b','same_value_as':'/a'},records)
+        self.assertIn({'pointer':'/c/text','value':'different'},records)
+        escaped=[json.loads(line) for line in cp.json_projection({'a/b~':None})]
+        self.assertIn({'pointer':'/a~1b~0','value':None},escaped)
+
+    def test_projection_quotes_and_original_source_lines_are_distinguished(self):
+        raw=b'{"rule": {"text": "reject zero"}}'
+        source,source_format=cp.evidence_lines(raw,'source')
+        projected,assessment_format=cp.evidence_lines(raw,'assessment')
+        self.assertEqual(source_format,'original-lines')
+        self.assertEqual(assessment_format,'json-pointer-records-v1')
+        self.assertEqual(json.loads(projected[-1])['pointer'],'/rule/text')
+        self.assertEqual(source,[raw.decode()])
+
+    def test_supplemental_source_is_kept_for_independent_reviewer(self):
+        self.plan()
+        requested=False
+        def runtime(provider,run,directory,role,message):
+            nonlocal requested
+            context=json.loads(message)
+            if context.get('unit_id')=='U0002':
+                if role=='executor' and not requested:
+                    requested=True
+                    return {'kind':'read','area':'source','paths':['rule.cbl'],'start':1,'end':3}
+                if role=='reviewer':
+                    self.assertTrue(any(p['area']=='source' and 'IF AMOUNT' in p.get('text','') for p in context['evidence']))
+            return self.runtime(provider,run,directory,role,message)
+        # Stop at synthesis so this test isolates supplement handoff, not fixture synthesis rules.
+        with patch.object(app,'legacy_pipeline',return_value={'status':'READY_FOR_SYNTHESIS'}):
+            result=app.pipeline(self.work,self.project,self.args('validate'),runtime)
+        self.assertEqual(result['status'],'READY_FOR_SYNTHESIS')
+        self.assertTrue(requested)
+        self.assertEqual(self.project['pipeline']['calls'],5)
+
+    def test_feedback_reopens_only_blocked_unit_without_resetting_calls(self):
+        self.plan()
+        app.pipeline(self.work,self.project,self.args('validate'),lambda *a:{'kind':'blocked','reason':'Need SME clarification'})
+        consumed=self.project['pipeline']['calls']
+        result=app.feedback(self.work,self.project,self.args('feedback','--unit','U0001','--by','Fixture owner','--note','Keep the uncertainty explicit'))
+        self.assertEqual(result['calls_consumed'],consumed)
+        self.assertEqual(self.project['checkpoints']['units']['U0001']['attempt'],2)
+        self.assertEqual(self.project['stage'],'RUNNING_EXECUTOR')
+        self.assertEqual(set(self.project['approvals']),{'assessment'})

@@ -1,5 +1,6 @@
 """Bounded, independently reviewed evidence units. No cloud or model calls in planning."""
 import json
+import re
 from pathlib import Path
 
 from pilot import Blocked, require, sha, tracked_file, git
@@ -10,13 +11,48 @@ CHECKPOINT_BYTES = 14000
 MAX_LINES = 250
 
 
+def json_projection(value):
+    """Lossless pointer records; repeated object/array values become explicit references."""
+    lines, seen = [], {}
+    def visit(item, pointer):
+        if isinstance(item, (dict, list)) and item:
+            fingerprint = digest(item)
+            if fingerprint in seen:
+                lines.append(json.dumps({'pointer':pointer, 'same_value_as':seen[fingerprint]}, ensure_ascii=False))
+                return
+            seen[fingerprint] = pointer
+            lines.append(json.dumps({'pointer':pointer, 'container':'object' if isinstance(item, dict) else 'array'}))
+            entries = item.items() if isinstance(item, dict) else enumerate(item)
+            for key, child in entries:
+                token = str(key).replace('~', '~0').replace('/', '~1')
+                visit(child, pointer + '/' + token)
+        else:
+            lines.append(json.dumps({'pointer':pointer, 'value':item}, ensure_ascii=False))
+    visit(value, '')
+    return lines
+
+
+def evidence_lines(raw, area):
+    text = raw.decode('utf-8')
+    if area == 'assessment':
+        try:
+            value = json.loads(text)
+        except ValueError:
+            pass
+        else:
+            if isinstance(value, (dict, list)):
+                return json_projection(value), 'json-pointer-records-v1'
+    return text.splitlines(), 'original-lines'
+
+
 def segments(area, name, path, expected):
     require(sha(path) == expected, 'Evidence changed while planning')
     raw = path.read_bytes()
     base = {'area': area, 'path': name, 'sha256': expected}
     try:
         require(len(raw) <= 10000000 and b'\0' not in raw, 'Opaque evidence')
-        lines = raw.decode('utf-8').splitlines()
+        lines, format_name = evidence_lines(raw, area)
+        base['format'] = format_name
     except (Blocked, UnicodeError):
         return [{**base, 'start': 0, 'end': 0, 'opaque': True, 'bytes': len(raw)}]
     if not lines:
@@ -44,30 +80,52 @@ def make_plan(project, assessment_dir, run, catalog):
     records = []
     root = Path(project['source']['root'])
     # Do not filter tracked files by extension or silently discard unsafe names.
-    for name in sorted(git(root, 'ls-files').splitlines()):
+    source_names = sorted(git(root, 'ls-files').splitlines())
+    for name in source_names:
         path = tracked_file(root, name)
         records.extend(segments('source', name, path, sha(path)))
     expected = {x['path']: x['sha256'] for x in run['assessment_index']}
+    aliases, content_paths = [], {}
     for entry in sorted(catalog, key=lambda x: x['path']):
         path = assessment_dir / 'assessment' / entry['path']
         require(path.is_file() and not path.is_symlink()
                 and path.resolve().is_relative_to((assessment_dir / 'assessment').resolve()), 'Unsafe assessment path')
-        records.extend(segments('assessment', entry['path'], path, expected[entry['path']]))
+        fingerprint = expected[entry['path']]
+        require(sha(path) == fingerprint, 'Assessment changed while planning')
+        if fingerprint in content_paths:
+            aliases.append({'path':entry['path'], 'same_bytes_as':content_paths[fingerprint], 'sha256':fingerprint})
+        else:
+            content_paths[fingerprint] = entry['path']
+            records.extend(segments('assessment', entry['path'], path, fingerprint))
+    unit_limit = min(90000, max(1000, project['settings']['max_context_bytes'] - CHECKPOINT_BYTES - 65000))
+    labels = {x['path']:x.get('label',x['path']) for x in catalog}
+    def focus(record):
+        if record['area'] == 'source': return record['path']
+        label = re.sub(r'-(cbl|jcl|cpy|bms|sql|proc)\.json$', r'.\1', labels[record['path']], flags=re.IGNORECASE)
+        if label in source_names: return label
+        matches = [n for n in source_names if Path(n).name.lower() == Path(label).name.lower()]
+        return matches[0] if len(matches) == 1 else '@assessment'
+    for record in records: record['focus'] = focus(record)
+    linked = {r['focus'] for r in records if r['area']=='assessment' and r['focus']!='@assessment'}
+    for record in records:
+        if record['area']=='source' and record['focus'] not in linked: record['focus']='@source-support'
+    records.sort(key=lambda r:(r['focus']=='@assessment', r['focus'], r['area'] != 'source', r['path'], r['start']))
     units, batch, size = [], [], 0
     for record in records:
         weight = min(record['bytes'], UNIT_BYTES // 2) + len(json.dumps(record).encode())
-        if batch and (size + weight > UNIT_BYTES or batch[0]['area'] != record['area']):
-            units.append({'id': f'U{len(units)+1:04d}', 'segments': batch})
+        if batch and (size + weight > unit_limit or batch[0]['focus'] != record['focus']):
+            units.append({'id': f'U{len(units)+1:04d}', 'focus':batch[0]['focus'], 'segments': batch})
             batch, size = [], 0
         batch.append(record); size += weight
     if batch:
-        units.append({'id': f'U{len(units)+1:04d}', 'segments': batch})
+        units.append({'id': f'U{len(units)+1:04d}', 'focus':batch[0]['focus'], 'segments': batch})
     require(units, 'No evidence units available')
     excluded = sorted(set(expected) - {x['path'] for x in catalog})
     return {'version': 1, 'source_commit': project['source']['commit'],
             'assessment': project['assessments'][project['selected']]['sha256'],
             'scope': project['scope'], 'units': units,
-            'catalog_exclusions': excluded,
+            'catalog_exclusions': excluded, 'exact_duplicate_assessments':aliases,
+            'projection': 'JSON pointer records preserve values and identify repeated objects/arrays by exact-value reference. Line numbers in these records are projection lines, not original JSON lines.',
             'exclusion_policy': 'Operational logs, duplicate HTML and provenance metadata; originals remain sealed.',
             'minimum_calls': len(units) * 2 + 2,
             'estimate_note': 'Lower bound: executor and reviewer per unit, plus synthesis and integration review. Rework and reads cost more.'}
@@ -82,7 +140,8 @@ def evidence(unit, project, assessment_dir):
         require(sha(path) == part['sha256'], 'Checkpoint evidence changed')
         row = dict(part)
         if not part.get('opaque') and not part.get('empty'):
-            lines = path.read_text().splitlines()
+            lines, format_name = evidence_lines(path.read_bytes(), part['area'])
+            require(format_name == part.get('format', 'original-lines'), 'Evidence projection format changed')
             row['text'] = '\n'.join(f'{n}: {lines[n-1]}' for n in range(part['start'], part['end']+1))
         result.append(row)
     return result
@@ -195,9 +254,16 @@ def run(work, project, args, runtime, app):
                 return {'status':'BLOCKED', 'reason':state['reason'], 'calls':state['calls']}
             role = record['role']
             supplied = evidence(unit, project, assessment_dir)
+            seen_ranges = {(p['area'],p['path'],p['start'],p['end']) for p in supplied}
+            for part in evidence({'segments':record.get('source_reads', [])}, project, assessment_dir):
+                identity = (part['area'],part['path'],part['start'],part['end'])
+                if identity not in seen_ranges:
+                    supplied.append(part); seen_ranges.add(identity)
             context = {'protocol': (app.FRAMEWORK / 'prompts/checkpoints' / (role + '.md')).read_text(),
                        'unit_id': unit['id'], 'scope': project['scope'], 'evidence': supplied,
-                       'previous_review': record.get('previous_review'), 'validation_error':record.get('validation_error')}
+                       'source_files': app.kw.inventory(assessment_run),
+                       'previous_review': record.get('previous_review'), 'validation_error':record.get('validation_error'),
+                       'human_feedback':record.get('human_feedback', [])}
             if role == 'reviewer':
                 require(sha(work / record['candidate_path']) == record['candidate_sha256'], 'Unit candidate changed after handoff')
                 context['candidate'] = app.read(work / record['candidate_path'])
@@ -212,6 +278,34 @@ def run(work, project, args, runtime, app):
             evidence(unit, project, assessment_dir)
             receipt = area / f'reply-{state["calls"]}.json'
             app.write(receipt, reply)
+            if reply.get('kind') == 'read':
+                require(reply.get('area', 'source') == 'source', 'Checkpoint supplemental reads must request primary source')
+                read_run = dict(assessment_run, settings=project['settings'], round=record['attempt'], role_reads={}, events=[])
+                try:
+                    chunks = app.kw.source_read(read_run, assessment_dir, role, reply)
+                    additions = []
+                    for chunk in chunks:
+                        lines = chunk['text'].splitlines()
+                        require(lines, 'Source range is empty; request an existing range')
+                        start = int(lines[0].split(':',1)[0]); end = int(lines[-1].split(':',1)[0])
+                        additions.append({'area':'source', 'path':chunk['path'], 'sha256':chunk['sha256'],
+                                          'start':start, 'end':end, 'format':'original-lines', 'bytes':len(chunk['text'].encode())})
+                    fresh = evidence({'segments':additions}, project, assessment_dir)
+                    require(len(json.dumps({**context, 'evidence':supplied+fresh}).encode()) <= project['settings']['max_context_bytes'],
+                            'Supplemental evidence exceeds unit context; request a smaller range')
+                    saved = record.setdefault('source_reads', [])
+                    for part in additions:
+                        if part not in saved: saved.append(part)
+                    record.pop('validation_error', None)
+                except Blocked as error:
+                    if str(error) not in {'Read result exceeds byte budget; request fewer lines',
+                            'Read ranges require positive start/end and at most 500 lines',
+                            'Read request must name one to five paths', 'Source range is empty; request an existing range',
+                            'Supplemental evidence exceeds unit context; request a smaller range'}:
+                        raise
+                    record['validation_error'] = str(error)
+                app.persist(work, project)
+                continue
             if reply.get('kind') == 'blocked':
                 record.update(status='BLOCKED', reason=reply.get('reason', 'Evidence missing'))
                 state.update(status='BLOCKED', reason=record['reason']); project['stage']='BLOCKED'

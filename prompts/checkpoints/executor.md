@@ -18,7 +18,7 @@ Return one JSON object (at most 14000 UTF-8 bytes):
  "findings":[{"id":"U0001-F1","kind":"business_rule|observation|dependency|assessment_claim",
  "statement":"A factual assertion","status":"SOURCE_VERIFIED|INFERRED|UNKNOWN",
  "citations":[{"area":"source|assessment","path":"supplied path","start":1,"end":2,
- "quote":"Exact original lines without the controller's line-number prefixes"}]}],
+ "quote":"Exact supplied lines without the controller's line-number prefixes"}]}],
  "questions":[{"id":"U0001-Q1","question":"Missing evidence or decision",
  "impact":"Consequence","owner":"SME or architect role","blocks":"Blocked work"}]}
 
@@ -29,3 +29,18 @@ coverage. Every finding needs an exact quotation from the supplied ranges. Every
 unverified finding or NEEDS_SME coverage requires an owned question. Questions are
 public review artifacts, not internal reasoning. Apply prior reviewer corrections.
 If a usable checkpoint cannot be produced, return {"kind":"blocked","reason":"..."}.
+
+For json-pointer-records-v1 evidence, line numbers refer to a deterministic JSON
+projection, NOT original file lines. Each record names the original JSON pointer.
+`same_value_as` denotes an exactly equal object/array elsewhere in that same file;
+it does not assert that different rule IDs or conflicting values are equivalent.
+Preserve the JSON pointer in references. A reference target outside this unit is a
+cross-unit dependency, not permission to invent its content. No AI summary was used
+for this projection; source-file evidence continues to use original line numbers.
+
+When a claim needs a copybook, caller, callee or other primary-source context, request
+{"kind":"read","area":"source","paths":["tracked/path"],"start":1,"end":200}.
+Use source_files to locate exact paths. At most five paths and 500 lines per path;
+request small ranges that fit the unit. Supplemental reads consume the total call
+budget and are retained for this unit, including its independent review. If evidence
+still cannot fit, return BLOCKED with the dependency; never silently discard it.

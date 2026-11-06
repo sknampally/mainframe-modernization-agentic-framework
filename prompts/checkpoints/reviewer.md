@@ -18,3 +18,15 @@ PASS requires no reviewer defects (empty findings). REWORK needs actionable find
 BLOCKED names missing evidence that cannot be resolved within this unit. Legitimate
 unresolved SME questions may remain, but the candidate must preserve their impact
 and blocked work. No application implementation, deployment or human approval occurs.
+
+Assessment JSON may be supplied as json-pointer-records-v1: deterministic records
+of original JSON values with exact duplicate object/array references. Projection
+line numbers are not original file lines. Check pointers and preserve unresolved
+cross-unit reference targets; do not treat the projection as primary-source proof.
+
+When a claim needs a copybook, caller, callee or other primary-source context, request
+{"kind":"read","area":"source","paths":["tracked/path"],"start":1,"end":200}.
+Use source_files to locate exact paths. At most five paths and 500 lines per path;
+request small ranges that fit the unit. Supplemental reads consume the total call
+budget and are retained for this unit, including its independent review. If evidence
+still cannot fit, return BLOCKED with the dependency; never silently discard it.

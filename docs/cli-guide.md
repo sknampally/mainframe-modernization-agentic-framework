@@ -541,3 +541,12 @@ The final synthesis must fit the configured context limit. If the combined revie
 findings exceed it, the controller stops before a model call; it never silently drops
 them. Hierarchical synthesis for larger repositories is not implemented. This is a
 checkpoint/recovery improvement, not a claim of unlimited repository-scale support.
+
+The planner pairs reports with source using exact member paths or unique matching
+filenames. Ambiguous matches remain unpaired. Identical assessment files are listed
+as hash-verified aliases, not separately reviewed copies. For JSON, deterministic
+pointer records preserve parsed values and replace exactly repeated objects/arrays
+with explicit references. Conflicting values remain separate. Projection line
+numbers refer to pointer records, never to original JSON file lines; originals stay
+sealed. Agents can request bounded primary-source supplements for dependencies and
+reconciliation. These reads remain attached to the unit and consume the same budget.
