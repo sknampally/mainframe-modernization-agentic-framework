@@ -727,7 +727,7 @@ def json_reply(text):
     if stripped.startswith('```json') and stripped.endswith('```'):
         stripped = stripped[7:-3].strip()
     value = json.loads(stripped)
-    require(isinstance(value, dict) and value.get('kind') in {'read', 'candidate', 'review', 'blocked'},
+    require(isinstance(value, dict) and value.get('kind') in {'read', 'candidate', 'checkpoint', 'review', 'blocked'},
             'Agent response is not a supported structured handshake')
     return value
 
