@@ -216,7 +216,7 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(result['calls'], 7)
         self.assertEqual(result['status'], 'AWAITING_VALIDATION_APPROVAL')
         correction = self.messages[3][2]['candidate_correction']
-        self.assertEqual(correction['error'], 'Proposed monorepo layout required')
+        self.assertIn('array of strings', correction['error'])
         self.assertNotIn('monorepo_layout', correction['rejected_specification'])
         self.assertTrue((self.work/'preparation/reply-3.json').exists())
         self.assertEqual(self.project['pipeline']['role'], 'reviewer')

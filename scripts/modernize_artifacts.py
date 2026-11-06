@@ -70,7 +70,7 @@ def validate_spec(spec, source):
         require(item['id'] not in seen and strings(item.get('depends_on')) and set(item['depends_on']) <= seen,
                 'Work items must have unique IDs in dependency order')
         seen.add(item['id'])
-    require(strings(spec.get('monorepo_layout')) and spec['monorepo_layout'], 'Proposed monorepo layout required')
+    require(strings(spec.get('monorepo_layout')) and spec['monorepo_layout'], 'monorepo_layout must be a nonempty array of strings, e.g. ["apps/ui: proposed interface"], not objects')
 
 
 def validate_screens(value, spec):
