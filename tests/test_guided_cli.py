@@ -125,6 +125,28 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(saved['pending_action']['command'],'validate')
         self.assertEqual(output[0]['status'],'CANCELLED')
 
+    def test_profile_prompt_has_no_default_and_reprompts_blank(self):
+        with patch.object(guide, 'optional', side_effect=['', '  ', 'chosen-profile']) as prompt:
+            self.assertEqual(guide.choose_aws_profile(), 'chosen-profile')
+        self.assertEqual(prompt.call_count, 3)
+        for call in prompt.call_args_list:
+            self.assertEqual(call.args, ('AWS profile (required; no default)',))
+            self.assertEqual(call.kwargs, {})
+
+    def test_missing_profile_never_uses_default_credentials(self):
+        with patch.object(guide.shutil, 'which', return_value='/fixture/aws'), patch.object(guide, 'command_ok') as check:
+            with self.assertRaisesRegex(Blocked, 'explicit AWS profile'):
+                guide.ensure_aws_login({'aws': {}})
+        check.assert_not_called()
+
+    def test_declined_configuration_shows_safe_recovery_instructions(self):
+        with patch.object(guide.shutil, 'which', return_value='/fixture/aws'), patch.object(sys.stdin, 'isatty', return_value=True), patch.object(guide, 'command_ok', return_value=False), patch.object(guide, 'yes', return_value=False), patch('sys.stdout', new_callable=io.StringIO) as output:
+            with self.assertRaises(Blocked):
+                guide.ensure_aws_login(self.project)
+        self.assertIn('AWS access was not verified', output.getvalue())
+        self.assertIn('/privacy', output.getvalue())
+        self.assertNotIn('fixture', output.getvalue())
+
     def test_valid_aws_session_does_not_launch_login(self):
         with patch.object(guide.shutil,'which',return_value='/fixture/aws'),patch.object(guide,'command_ok',return_value=True),patch.object(guide.subprocess,'run') as run:
             guide.ensure_aws_login(self.project)

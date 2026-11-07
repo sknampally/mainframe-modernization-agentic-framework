@@ -59,7 +59,8 @@ def connect_arguments(path):
 def sso_defaults(project):
     config = configparser.RawConfigParser()
     config.read(Path(os.environ.get('AWS_CONFIG_FILE', str(Path.home()/'.aws/config'))))
-    profile = project['aws'].get('profile') or 'default'
+    profile = (project['aws'].get('profile') or '').strip()
+    require(profile, 'An explicit AWS profile is required; enter it during setup')
     section = 'default' if profile == 'default' else 'profile ' + profile
     session = config.get(section,'sso_session',fallback='')
     section = 'sso-session ' + session if session else section
@@ -126,10 +127,29 @@ def installation_hint(tool):
     return tool + ': ' + urls.get(tool, 'Install your configured launcher through its approved vendor distribution')
 
 
+def choose_aws_profile():
+    """A new setup must never select an AWS account implicitly."""
+    print('Enter your AWS profile name explicitly (no default). To list profiles, run aws configure list-profiles in another terminal.')
+    while True:
+        value = optional('AWS profile (required; no default)').strip()
+        if value:
+            return value
+        print('AWS profile is required. Enter a configured profile name, or Ctrl+C to cancel.')
+
+
 def ensure_aws_login(project):
+    try:
+        return _ensure_aws_login(project)
+    except Blocked:
+        print('AWS access was not verified; no assessment was started by this check. Select the intended profile and complete its login. Use /flow to retry new setup, or /init for saved setup. /privacy reveals the detailed local error.')
+        raise
+
+
+def _ensure_aws_login(project):
     """Check credentials, optionally complete SSO, then prove access with STS."""
     require(shutil.which('aws'), 'Install AWS CLI v2 before continuing: ' + installation_hint('aws'))
-    profile = project['aws'].get('profile') or 'default'
+    profile = (project['aws'].get('profile') or '').strip()
+    require(profile, 'An explicit AWS profile is required; enter it during setup')
     aws = ['aws', '--profile', profile, '--no-cli-pager']
     if project['aws'].get('region'): aws += ['--region', project['aws']['region']]
     verify = aws + ['--cli-connect-timeout', '5', '--cli-read-timeout', '10', 'sts', 'get-caller-identity']
@@ -205,7 +225,7 @@ def guided_init(args):
             args.ref = args.ref or value or None
         args.scope = args.scope or ask('Business journey / assessment scope', 'Assess the entire supplied repository')
         print('Choose an AWS profile. Setup can guide SSO configuration/login when access needs refreshing.')
-        args.aws_profile = args.aws_profile or ask('AWS profile', 'default')
+        args.aws_profile = (args.aws_profile or '').strip() or choose_aws_profile()
         args.region = args.region or ask('AWS region', 'us-east-1')
         ensure_aws_login({'aws': {'profile': args.aws_profile, 'region': args.region}})
         args.bucket = args.bucket or ask('Private S3 bucket name')
