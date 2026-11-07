@@ -183,9 +183,16 @@ def guided_init(args):
     require(sys.stdin.isatty(), 'Interactive setup needs a terminal; supply --workspace, --source and --scope for scripted init')
     print('Modernization setup — source, environment, AWS assessment access and model roles.')
     print('Workstation installation and login instructions: ' + str(app.FRAMEWORK / 'docs/engineer-setup.md'))
+    from modernize_workspace import default_parent, output_directory
     default = args.workspace
-    if not default and active_file().exists(): default = str(workspace())
-    work = Path(ask('Private workspace directory', default or str(Path.home() / 'modernization-poc' / 'carddemo'))).expanduser().resolve()
+    parent = getattr(args, 'output_parent', None)
+    if not default and not parent and not args.source and active_file().exists(): default = str(workspace())
+    if not default:
+        args.source = args.source or ask('Local Git checkout or GitHub repository URL', 'https://github.com/aws-samples/aws-mainframe-modernization-carddemo.git')
+        parent = parent or ask('Engineer workspace directory (assessment folder is created inside it)', str(default_parent(args.source, app.FRAMEWORK)))
+        default = str(output_directory(parent, args.source))
+        print('Assessment output folder: ' + default)
+    work = Path(ask('Assessment output directory', default)).expanduser().resolve()
     require(not work.is_relative_to(app.FRAMEWORK), 'Choose a private workspace outside the framework checkout')
     args.workspace = str(work)
     if (work / 'project.json').exists():
@@ -196,7 +203,7 @@ def guided_init(args):
         if args.source.startswith('https://'):
             value = optional('Git commit/ref to pin (Enter uses current default branch)')
             args.ref = args.ref or value or None
-        args.scope = args.scope or ask('Business journey / assessment scope', 'CardDemo sign-on journey; exclude other application journeys')
+        args.scope = args.scope or ask('Business journey / assessment scope', 'Assess the entire supplied repository')
         print('Choose an AWS profile. Setup can guide SSO configuration/login when access needs refreshing.')
         args.aws_profile = args.aws_profile or ask('AWS profile', 'default')
         args.region = args.region or ask('AWS region', 'us-east-1')

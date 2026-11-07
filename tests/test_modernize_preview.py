@@ -79,13 +79,13 @@ class PreviewTests(unittest.TestCase):
 
     def test_tampered_generated_design_is_rejected(self):
         preview.run(self.work,self.project,self.arguments,app,self.runtime)
-        (self.work/'preview-transform-direct'/'proposed-design.json').write_text('{}')
+        (self.work/'previews'/'transform-direct'/'proposed-design.json').write_text('{}')
         with self.assertRaisesRegex(Blocked,'design changed'):preview.run(self.work,self.project,self.arguments,app,self.runtime)
 
     def test_model_failure_keeps_separate_call_count_and_original_pipeline(self):
         def fail(*a):raise app.kw.RuntimeUnavailable('Fixture provider failure')
         with self.assertRaises(app.kw.RuntimeUnavailable):preview.run(self.work,self.project,self.arguments,app,fail)
-        state=app.read(self.work/'preview-transform-direct'/'preview-state.json')
+        state=app.read(self.work/'previews'/'transform-direct'/'preview-state.json')
         self.assertEqual(state['calls'],1)
         self.assertEqual(self.project['pipeline']['calls'],64)
 
@@ -109,7 +109,7 @@ class PreviewTests(unittest.TestCase):
 
     def test_export_refresh_reuses_verified_design_without_model_call(self):
         preview.run(self.work,self.project,self.arguments,app,self.runtime)
-        state_path=self.work/'preview-transform-direct'/'preview-state.json'
+        state_path=self.work/'previews'/'transform-direct'/'preview-state.json'
         state=app.read(state_path);state['framework_commit']='b'*40;app.write(state_path,state)
         self.arguments.refresh_export=True
         result=preview.run(self.work,self.project,self.arguments,app,lambda *a:self.fail('No generation during export refresh'))
