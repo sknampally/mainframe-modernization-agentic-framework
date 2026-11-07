@@ -107,6 +107,10 @@ def initialize(args, work):
         'aws': {'profile': args.aws_profile, 'region': args.region, 'bucket': args.bucket},
         'providers': {'executor': args.executor, 'reviewer': 'claude', 'wireframes': args.ui_provider},
         'assessments': {}, 'approvals': {}, 'decisions': {}, 'setup': {}, 'events': [], 'stage': 'INITIALIZED'}
+    for folder in ('previews', 'packages', 'reports'):
+        (work / folder).mkdir(exist_ok=True, mode=0o700)
+    from modernize_workspace import report_index
+    report_index(work)
     persist(work, project)
     return {'workspace': str(work), 'status': project['stage'], 'source_commit': project['source']['commit']}
 
@@ -1006,7 +1010,8 @@ def review_site(work, project, args, runtime=model_call):
     project['ui_calls'] = project.get('ui_calls', 0) + 1
     require(project['ui_calls'] <= project['settings']['max_model_calls'], 'UI invocation budget exhausted')
     persist(work, project)
-    directory = work / ('review-site-' + str(project['ui_calls']))
+    directory = work / 'previews' / ('business-' + str(project['ui_calls']))
+    directory.parent.mkdir(exist_ok=True, mode=0o700)
     directory.mkdir(mode=0o700)
     message = json.dumps({'protocol': (FRAMEWORK / 'prompts/pipeline/wireframes.md').read_text(),
                           'specification': spec, 'decisions': project['decisions']})
@@ -1019,7 +1024,7 @@ def review_site(work, project, args, runtime=model_call):
     write(directory / 'api-contracts.json', screens['apis'])
     (directory / 'index.html').write_text(render_site(spec, screens, project['decisions']))
     (directory / 'index.html').chmod(0o600)
-    project['site'] = {'directory': directory.name, 'specification': project['specification']['sha256'],
+    project['site'] = {'directory': str(directory.relative_to(work)), 'specification': project['specification']['sha256'],
                        'decisions': digest(project['decisions']), 'provider': provider,
                        'files': {p: sha(directory / p) for p in ('screens.json', 'index.html', 'api-contracts.json')}}
     project['stage'] = 'AWAITING_SPECIFICATIONS_APPROVAL'
@@ -1068,7 +1073,8 @@ def package(work, project):
     require(project['approvals']['validation'].get('report_sha256') == verified_preparation_report(work, project),
             'Preparation report approval changed')
     version = digest(project['approvals'])[:16]
-    destination = work / ('package-' + version)
+    destination = work / 'packages' / ('package-' + version)
+    destination.parent.mkdir(exist_ok=True, mode=0o700)
     require(not destination.exists(), 'Package already exists; inspect it or use feedback for a new version')
     destination.mkdir(mode=0o700)
     write(destination / 'specification.json', spec)
@@ -1121,13 +1127,13 @@ def package(work, project):
         'Keep private; inspect all contents before sharing.\n')
     manifest = {p.name: sha(p) for p in destination.iterdir() if p.is_file()}
     write(destination / 'checksums.json', manifest)
-    archive = work / (destination.name + '.zip')
+    archive = destination.parent / (destination.name + '.zip')
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(destination.iterdir()):
             path.chmod(0o600)
             bundle.write(path, path.name)
     archive.chmod(0o600)
-    project['package'] = {'path': archive.name, 'sha256': sha(archive)}
+    project['package'] = {'path': str(archive.relative_to(work)), 'sha256': sha(archive)}
     project['stage'] = 'PACKAGED'
     persist(work, project)
     return {'status': 'PACKAGED', 'archive': str(archive), 'sha256': sha(archive)}
@@ -1228,6 +1234,7 @@ def parser():
     commands = p.add_subparsers(dest='command', required=True)
     init = commands.add_parser('init', help='Pin GitHub/local source and save private settings')
     init.add_argument('--source')
+    init.add_argument('--output-parent', help='Engineer workspace; creates <source-repo>_assessment inside it')
     init.add_argument('--guided', action='store_true', help='Run or resume the interactive setup guide')
     init.add_argument('--ref')
     init.add_argument('--scope')
@@ -1253,6 +1260,8 @@ def parser():
         a.add_argument('--detach', action='store_true')
         a.add_argument('--attach-job')
     commands.add_parser('status')
+    relocate = commands.add_parser('relocate', help='Move verified private outputs into <source-repo>_assessment')
+    relocate.add_argument('--output-parent', required=True)
     planning = commands.add_parser('prepare-plan', help='Plan bounded evidence units without model calls')
     planning.add_argument('--activate', action='store_true', help='Archive stopped legacy preparation and use the plan; retain budgets and approvals')
 
@@ -1321,6 +1330,9 @@ def main(argv=None, reporter=None):
         return launch(initial='init')
     emit = reporter or (lambda value: print(json.dumps(value, indent=2)))
     args = parser().parse_args(values)
+    if args.command == 'init' and args.source and not args.workspace and getattr(args, 'output_parent', None):
+        from modernize_workspace import output_directory
+        args.workspace = str(output_directory(args.output_parent, args.source))
     from modernize_setup import guided_init, workspace, select_workspace, prepare_command, next_step
     project = None
     try:
@@ -1389,6 +1401,9 @@ def main(argv=None, reporter=None):
                         result = package(work, project)
                     elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED', 'BLOCKED', 'REWORK_LIMIT'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
+                    elif args.command == 'relocate':
+                        import modernize_workspace
+                        result = modernize_workspace.relocate(work, project, args.output_parent, sys.modules[__name__])
                     elif args.command == 'prepare-plan': result = preparation_plan(work, project, args)
 
                     elif args.command == 'preview':
@@ -1433,6 +1448,9 @@ def main(argv=None, reporter=None):
                     # Preserve consumed call counts and remote mutation markers on every failure.
                     persist(work, project)
                     raise
+        if args.command in {'preview', 'assessment-report', 'review-site', 'package'} and 'work' in locals():
+            from modernize_workspace import report_index
+            result['reports'] = str(report_index(work))
         if project is not None and 'next_step' not in result:
             result['next_step'] = next_step(project)
         emit(result)

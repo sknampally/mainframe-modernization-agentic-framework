@@ -129,7 +129,8 @@ def run(work, project, args, app, runtime=None):
     directory, assessment=app.verified_assessment(project,project['selected'])
     fingerprint=project['assessments'][project['selected']]['sha256']
     app.approved(project,'assessment',fingerprint)
-    destination=work/('preview-'+app.name(args.name))
+    from modernize_workspace import preview_directory
+    destination=preview_directory(work,app.name(args.name))
     destination.mkdir(exist_ok=True,mode=0o700)
     state_path=destination/'preview-state.json'
     if state_path.exists():
@@ -184,13 +185,22 @@ def run(work, project, args, app, runtime=None):
     app.verify_source({**project,'framework_commit':current})
     app.verified_assessment(project,project['selected'])
     bundle=destination/'handoff';bundle.mkdir(exist_ok=True,mode=0o700)
+    if state.get('archive_path'):
+        archive=work/state['archive_path']
+        require(archive.resolve().is_relative_to(work.resolve()), 'Package path escapes workspace')
+    elif (destination/'ai-dlc-draft.zip').exists():
+        archive=destination/'ai-dlc-draft.zip'
+    else:
+        archive=work/'packages'/app.name(args.name)/'ai-dlc-draft.zip'
+    archive.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+    state['archive_path']=archive.relative_to(work).as_posix()
     if state.get('status') == 'DRAFT_READY':
         require(sha(bundle/'checksums.json') == state.get('bundle_manifest_sha256'), 'Draft manifest changed; use a new preview name')
         manifest=app.read(bundle/'checksums.json')
         require(all(sha(bundle/name)==expected for name,expected in manifest.items()), 'Draft output changed; use a new preview name')
-        require(sha(destination/'ai-dlc-draft.zip') == state['archive_sha256'], 'Draft archive changed')
+        require(sha(archive) == state['archive_sha256'], 'Draft archive changed')
         return {'status':'DRAFT_READY','verification':'SKIPPED_BY_OWNER','rules':len(rules),'screens':len(value['screens']),
-                'model_calls':state['calls'],'html':str(bundle/'index.html'),'archive':str(destination/'ai-dlc-draft.zip'),
+                'model_calls':state['calls'],'html':str(bundle/'index.html'),'archive':str(archive),
                 'next_step':'Review the draft with stakeholders. Existing generation reused without model calls.'}
     allowed={'specification.json','rules.json','screens.json','api-contracts.json','implementation-backlog.json',
              'decisions-needed.json','assumptions.json','acceptance-catalog.json','ai-dlc.json','monorepo-layout.txt',
@@ -219,7 +229,6 @@ def run(work, project, args, app, runtime=None):
     (bundle/'rules.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><title>AWS rule catalog</title><style>body{font:16px system-ui;max-width:1000px;margin:40px auto}article{padding:16px;border-bottom:1px solid #ddd}pre{white-space:pre-wrap}</style><h1>AWS rule catalog</h1><p>'+e(NOTICE)+'</p><a href="index.html">Back to design preview</a>'+''.join('<details><summary>'+e(program)+' · '+str(len(items))+' rules</summary>'+''.join('<article><h3>'+e(str(r['name']))+'</h3><p>'+e(str(r['statement']))+'</p><pre>'+e(json.dumps(r['acceptance_criteria'],indent=2))+'</pre><small>'+e(r['id']+' · '+r['source_path']+' '+r['source_anchor'])+'</small></article>' for r in items)+'</details>' for program,items in groups.items())+'</html>')
     app.write(bundle/'provenance.json',{'assessment_sha256':fingerprint,'framework_commit':current,'source_commit':project['source']['commit'],'verification':'SKIPPED_BY_OWNER','generation_framework_commit':state.get('generation_framework_commit',current),'assistance':'Design content generated with '+args.provider+'; AWS rule records imported deterministically','preview_model_calls':state['calls']})
     app.write(bundle/'checksums.json',{p.name:sha(p) for p in bundle.iterdir() if p.is_file() and p.name!='checksums.json'})
-    archive=destination/'ai-dlc-draft.zip'
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
         for path in sorted(bundle.iterdir()):
             if path.is_file():path.chmod(0o600);z.write(path,path.name)

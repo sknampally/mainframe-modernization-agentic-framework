@@ -599,3 +599,51 @@ checks and no extra generation call. Use a different `--name` for a new version.
 All outputs stay outside the public framework repository; review before sharing.
 
 After a CLI export/importer fix, `preview --refresh-export` can re-export a hash-verified saved design without another model call. The original generation revision and export update are recorded. This does not rerun the skipped verification agents or grant any approval.
+
+### Keep outputs beside the source repository
+
+Guided setup asks for the source first, then the engineer's workspace directory.
+It suggests `<source-repo>_assessment` inside that workspace. When launched from
+inside the framework checkout, the default parent is its containing directory,
+so private findings stay outside the public framework repository. An explicit
+`--workspace` remains supported; saved workspaces resume without renaming themselves.
+The default scope is the entire supplied repository.
+
+```bash
+modernize init --source https://github.com/aws-samples/aws-mainframe-modernization-carddemo.git --output-parent "$HOME/workspace"
+```
+
+The layout is:
+
+```text
+workspace/
+  mainframe-modernization-agentic-framework/  # framework code only
+  aws-mainframe-modernization-carddemo_assessment/
+    project.json                            # saved run and approval state
+    source/                                 # managed source clone, if applicable
+    runs/                                   # AWS runs, originals, evidence and assessment reports
+    preparation/                            # executor/reviewer handoffs, if used
+    previews/<name>/handoff/                 # HTML wireframes and draft engineering files
+    packages/<name>/ai-dlc-draft.zip         # draft download
+    reports/index.html                      # links to reports, wireframes and packages
+```
+
+Approved engineering packages also go under `packages/`; business-review sites go
+under `previews/`. External source checkouts remain in their original locations.
+No output is copied into the public framework repository.
+
+Move an existing stopped workspace through the CLI:
+
+```bash
+modernize --workspace /path/to/old-assessment relocate --output-parent "$HOME/workspace"
+```
+
+Relocation refuses existing destinations, active agents and symbolic links. It
+copies to a temporary directory, verifies every file, updates live workspace/run
+paths, groups legacy preview folders and ZIPs, and selects the new workspace.
+Original evidence, provider receipts, HTML and archive bytes are preserved. It
+removes the old folder only after the verified destination is ready and selected.
+AWS jobs, connectors and buckets are not changed; model calls are not made.
+If removal of the old folder fails, `cleanup_pending` identifies the retained copy.
+Use `reports/index.html` as the single entry point after the move. Historical paths
+inside immutable receipts remain historical and are intentionally not rewritten.

@@ -76,7 +76,7 @@ class GuidedTests(unittest.TestCase):
             self.assertEqual(args.source,'/fixture/source')
             self.assertEqual(args.bucket,'fixture-bucket')
             app.write(work/'project.json',project)
-        answers=[str(self.work),'/fixture/source','Fixture scope','fixture','us-east-1','fixture-bucket','claude','codex','yes','no']
+        answers=['/fixture/source',str(self.work),str(self.work),'Fixture scope','fixture','us-east-1','fixture-bucket','claude','codex','yes','no']
         with patch.object(sys.stdin,'isatty',return_value=True),patch('builtins.input',side_effect=answers),patch.object(app,'initialize',side_effect=initialize),patch.object(guide,'checks'),patch.object(guide,'ensure_aws_login'):
             result=guide.guided_init(self.args('init'))
         self.assertEqual(result['status'],'SETUP_INCOMPLETE')
