@@ -357,6 +357,8 @@ def upgrade_framework(work, project, args):
     require(not (set(project.get('approvals', {})) - {'assessment'}) and not project.get('specification')
             and not project.get('pipeline', {}).get('candidate_sha256'),
             'Framework upgrades require no candidate or downstream approvals')
+    require(not any(u.get('candidate_sha256') for u in project.get('checkpoints', {}).get('units', {}).values()),
+            'Framework upgrades require no checkpoint candidates')
     if project.get('approvals', {}).get('assessment'):
         require(project.get('selected') in project['assessments'], 'Approved assessment identity is missing')
         verified_assessment(project, project['selected'])
@@ -589,6 +591,11 @@ def spec_path(work, project):
     path = work / record['path']
     require(sha(path) == record['sha256'], 'Specification changed after review')
     require(sha(work / record['review_path']) == record['review_sha256'], 'Independent review changed after acceptance')
+    if project.get('checkpoints'):
+        import modernize_checkpoints as cp
+        plan, capsules = cp.verified_capsules(work, project, sys.modules[__name__])
+        require(record.get('checkpoints_sha256') == digest(capsules) and len(capsules) == len(plan['units']),
+                'Reviewed evidence checkpoints changed after synthesis')
     return path
 
 
@@ -757,7 +764,84 @@ def bounded_preparation_context(context, limit):
     return message
 
 
+def preparation_plan(work, project, args):
+    import modernize_checkpoints as cp
+    require(not project.get('specification') and not (set(project.get('approvals', {})) - {'assessment'}),
+            'Planning requires no completed specification or downstream approval')
+    current = git(FRAMEWORK, 'rev-parse', 'HEAD')
+    verify_source({**project, 'framework_commit': current})
+    label = project.get('selected')
+    require(label, 'Approve the assessment before planning preparation')
+    directory, run = verified_assessment(project, label)
+    approved(project, 'assessment', project['assessments'][label]['sha256'])
+    if project.get('checkpoints'):
+        plan, capsules = cp.verified_capsules(work, project, sys.modules[__name__])
+    else:
+        plan = cp.make_plan(project, directory, run, assessment_catalog(run))
+        capsules = []
+    area = work / 'preparation'
+    area.mkdir(exist_ok=True, mode=0o700)
+    path = area / ('plan-' + digest(plan)[:16] + '.json')
+    if path.exists():
+        require(read(path) == plan, 'Existing preparation plan changed')
+    else:
+        write(path, plan)
+    report = area / 'preparation-plan.html'
+    rows = []
+    for unit in plan['units']:
+        record = project.get('checkpoints', {}).get('units', {}).get(unit['id'], {})
+        names = sorted({p['path'] for p in unit['segments']})
+        rows.append('<tr><td>' + html.escape(unit['id']) + '</td><td>' + html.escape(record.get('status', 'PENDING'))
+                    + '</td><td>' + '<br>'.join(html.escape(n) for n in names) + '</td></tr>')
+    report.write_text('<!doctype html><html lang="en"><meta charset="utf-8"><title>Preparation coverage plan</title>'
+        '<style>body{font:16px system-ui;max-width:1100px;margin:40px auto;padding:0 24px;color:#183046}'
+        'table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #ccd7df}</style>'
+        '<main><h1>Preparation coverage plan</h1><p>This is a deterministic inventory, not a completed assessment or approval.</p>'
+        '<p>' + str(len(plan['units'])) + ' evidence units; at least ' + str(plan['minimum_calls']) + ' model calls for a new pass. '
+        'Rework and additional evidence reads cost more. Calls are not a price estimate.</p>'
+        '<p>Every unit must pass independent review before synthesis. Binary, undecodable and oversized single-line content '
+        'remains unresolved for an SME. A reviewed range is not proof of runtime equivalence.</p>'
+        '<p>The final synthesis must also fit its configured context limit. If it does not, the controller stops without '
+        'trimming the reviewed checkpoints; hierarchical synthesis is not implemented.</p>'
+        '<table><thead><tr><th>Unit</th><th>State</th><th>Evidence files</th></tr></thead><tbody>' + ''.join(rows) +
+        '</tbody></table></main></html>')
+    report.chmod(0o600)
+    consumed = project.get('pipeline', {}).get('calls', 0)
+    if getattr(args, 'activate', False) and not project.get('checkpoints'):
+        require(project.get('stage') != 'PROVIDER_REVIEW_REQUIRED', 'Review the provider refusal before changing preparation mode')
+        require(not project.get('pipeline') or project['stage'] in {'BLOCKED','REWORK_LIMIT','ASSESSMENT_APPROVED'},
+                'Existing preparation must be stopped before activating a new plan')
+        old = project.get('pipeline', {})
+        archive = area / ('legacy-state-' + digest(old)[:16] + '.json')
+        write(archive, old)
+        project['pipeline'] = {'mode':'checkpoints', 'calls':consumed, 'round':1, 'role':'executor',
+                               'status':'RUNNING', 'contexts':{}, 'reads':{}}
+        project['checkpoints'] = {'plan_path':str(path.relative_to(work)), 'plan_sha256':sha(path),
+                                 'status':'PLANNED', 'units':{}, 'legacy_state':str(archive.relative_to(work)),
+                                 'legacy_sha256':sha(archive)}
+        upgrade_framework(work, project, SimpleNamespace(note='Activate bounded checkpoint preparation; archive prior attempts and retain call counts'))
+        project.pop('pending_action', None)
+        project['stage'] = 'PREPARATION_PLANNED'
+        persist(work, project)
+    return {'status':'PREPARATION_PLAN_READY', 'units':len(plan['units']),
+            'minimum_calls':plan['minimum_calls'], 'calls_consumed':consumed,
+            'calls_remaining':max(0, project['settings']['max_model_calls']-consumed),
+            'reviewed_units':len(capsules), 'opaque_segments':sum(bool(p.get('opaque')) for u in plan['units'] for p in u['segments']),
+            'plan':str(path), 'html':str(report), 'note':plan['estimate_note'],
+            'next_step':'Review the plan and budget before modernize validate; no model calls were made.'}
+
+
 def pipeline(work, project, args, runtime=model_call):
+    import modernize_checkpoints as cp
+    # Existing legacy runs retain their pinned behavior until explicitly migrated.
+    if not project.get('pipeline'):
+        preparation_plan(work, project, SimpleNamespace(activate=True))
+    if project.get('checkpoints') and project['checkpoints']['status'] != 'READY_FOR_SYNTHESIS':
+        return cp.run(work, project, args, runtime, sys.modules[__name__])
+    return legacy_pipeline(work, project, args, runtime)
+
+
+def legacy_pipeline(work, project, args, runtime=model_call):
     verify_source(project)
     validate_model_pair(project['providers']['executor'], project['settings'])
     label = project.get('selected')
@@ -770,7 +854,15 @@ def pipeline(work, project, args, runtime=model_call):
         return {'status': project['stage'], 'specification': project['specification']}
     area = work / 'preparation'
     area.mkdir(exist_ok=True, mode=0o700)
+    capsules = []
+    checkpoint_paths = set()
+    if project.get('checkpoints'):
+        import modernize_checkpoints as cp
+        plan, capsules = cp.verified_capsules(work, project, sys.modules[__name__])
+        require(len(capsules) == len(plan['units']), 'Every evidence unit needs independent review before synthesis')
+        checkpoint_paths = {p['path'] for u in plan['units'] for p in u['segments'] if p['area'] == 'source' and not p.get('opaque')}
     check_provider_refusals(area)
+    artifact_prefix = 'checkpoint-' if capsules else ''
     while state['calls'] < project['settings']['max_model_calls']:
         role, number = state['role'], state['round']
         key = f'{number}:{role}'
@@ -784,6 +876,9 @@ def pipeline(work, project, args, runtime=model_call):
             'feedback': project.get('feedback', []), 'decisions': project['decisions'],
             'remaining_model_calls': project['settings']['max_model_calls'] - state['calls'],
             'evidence_notes': state.get('evidence_notes', {}).get(key, [])}
+        if capsules:
+            context['reviewed_evidence_units'] = capsules
+            context['checkpoint_instruction'] = 'Use these cited, independently reviewed checkpoints for synthesis. Preserve every business-rule ID and SME question ID. This is full selected-scope integration, not permission to narrow scope. Validate cross-unit dependencies and assessment reconciliation; do not claim runtime equivalence.'
         prior_reply = next((area / f'reply-{n}.json' for n in range(state['calls'], 0, -1)
                             if (area / f'reply-{n}.json').exists()), None)
         if role == 'executor' and prior_reply is not None:
@@ -791,12 +886,14 @@ def pipeline(work, project, args, runtime=model_call):
             if prior.get('kind') == 'candidate':
                 try:
                     validate_spec(prior.get('specification'), Path(project['source']['root']))
+                    if capsules:
+                        cp.validate_synthesis(prior['specification'], capsules)
                 except Blocked as error:
                     context['candidate_correction'] = {'error': str(error),
                         'instruction': 'Return a complete corrected candidate. All evidence and review requirements still apply.',
                         'rejected_specification': prior.get('specification')}
         if role == 'reviewer':
-            candidate_path = area / f'candidate-{number}.json'
+            candidate_path = area / f'{artifact_prefix}candidate-{number}.json'
             require(sha(candidate_path) == state['candidate_sha256'], 'Candidate changed after handoff')
             context['candidate'] = read(candidate_path)
         if state.get('previous_review'):
@@ -833,34 +930,44 @@ def pipeline(work, project, args, runtime=model_call):
             state['reason'] = reply.get('reason', 'Evidence missing')
             break
         elif role == 'executor' and reply.get('kind') == 'candidate':
-            require(state['reads'].get(key), 'Executor must inspect source')
-            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history), 'Executor must inspect assessment findings')
+            require(state['reads'].get(key) or checkpoint_paths, 'Executor must inspect source')
+            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history) or capsules, 'Executor must inspect assessment findings')
             try:
                 validate_spec(reply.get('specification'), Path(project['source']['root']))
+                if capsules:
+                    cp.validate_synthesis(reply['specification'], capsules)
             except Blocked as error:
                 project.setdefault('events', []).append({'event': 'candidate_validation_failed',
                     'at': time.time(), 'call': state['calls'], 'reason': str(error)})
+                state['invalid_candidates'] = state.get('invalid_candidates', 0) + 1
+                if state['invalid_candidates'] >= 3:
+                    state.update(status='BLOCKED', reason='Three invalid synthesis candidates; inspect validation feedback')
+                    project['stage']='BLOCKED'
+                    break
                 persist(work, project)
                 continue
-            read_paths = {chunk['path'] for entry in history for chunk in entry['response'] if chunk['area'] == 'source'}
+            state['invalid_candidates'] = 0
+            read_paths = {chunk['path'] for entry in history for chunk in entry['response'] if chunk['area'] == 'source'} | checkpoint_paths
             require({rule['source_path'] for rule in reply['specification']['rules']} <= read_paths,
                     'Executor must inspect every rule source file')
-            write(area / f'candidate-{number}.json', reply['specification'])
-            state['candidate_sha256'] = sha(area / f'candidate-{number}.json')
+            write(area / f'{artifact_prefix}candidate-{number}.json', reply['specification'])
+            state['candidate_sha256'] = sha(area / f'{artifact_prefix}candidate-{number}.json')
             state['role'] = 'reviewer'
         elif role == 'reviewer' and reply.get('kind') == 'review':
-            require(state['reads'].get(key), 'Reviewer must independently inspect source')
-            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history), 'Reviewer must inspect assessment findings')
+            require(state['reads'].get(key) or checkpoint_paths, 'Reviewer must independently inspect source')
+            require(any(x['request'].get('area') == 'assessment' and x.get('response') for x in history) or capsules, 'Reviewer must inspect assessment findings')
             require(reply.get('decision') in {'PASS', 'REWORK', 'BLOCKED'} and isinstance(reply.get('findings'), list)
                     and isinstance(reply.get('report'), str) and reply['report'].strip(), 'Invalid reviewer decision')
-            write(area / f'review-{number}.json', reply)
+            write(area / f'{artifact_prefix}review-{number}.json', reply)
             if reply['decision'] == 'PASS':
-                read_paths = {chunk['path'] for entry in history for chunk in entry['response'] if chunk['area'] == 'source'}
+                read_paths = {chunk['path'] for entry in history for chunk in entry['response'] if chunk['area'] == 'source'} | checkpoint_paths
                 require({rule['source_path'] for rule in context['candidate']['rules']} <= read_paths,
                         'Reviewer must inspect every rule source file')
                 require(not reply['findings'], 'PASS cannot have unresolved reviewer findings; SME questions remain separate')
-                project['specification'] = {'path': f'preparation/candidate-{number}.json', 'sha256': state['candidate_sha256'],
-                                            'review_sha256': sha(area / f'review-{number}.json'), 'review_path': f'preparation/review-{number}.json'}
+                project['specification'] = {'path': f'preparation/{artifact_prefix}candidate-{number}.json', 'sha256': state['candidate_sha256'],
+                                            'review_sha256': sha(area / f'{artifact_prefix}review-{number}.json'), 'review_path': f'preparation/{artifact_prefix}review-{number}.json'}
+                if capsules:
+                    project['specification']['checkpoints_sha256'] = digest(capsules)
                 state['status'] = 'PASS'
                 project['stage'] = 'AWAITING_VALIDATION_APPROVAL'
                 preparation_report(work, project)
@@ -929,7 +1036,21 @@ def feedback(work, project, args):
     require(args.by.strip() and args.note.strip(), 'Feedback needs an owner and content')
     require(project.get('pipeline'), 'No preparation candidate to revise')
     state = project['pipeline']
-    require(state['calls'] < project['settings']['max_model_calls'], 'Budget exhausted; start a new workspace with explicit limits')
+    require(project['stage'] != 'PROVIDER_REVIEW_REQUIRED', 'Provider refusals require explicit provider review, not feedback')
+    require(state['calls'] < project['settings']['max_model_calls'], 'Budget exhausted; record an explicitly approved model-budget change first')
+    if project.get('checkpoints') and project['checkpoints']['status'] != 'READY_FOR_SYNTHESIS':
+        unit_id = getattr(args, 'unit', None)
+        require(unit_id in project['checkpoints']['units'], 'Specify the blocked evidence unit with --unit')
+        unit = project['checkpoints']['units'][unit_id]
+        require(unit['status'] in {'BLOCKED', 'REWORK_LIMIT'}, 'Feedback can reopen only a blocked unit, not a passed unit')
+        require(unit['attempt'] < project['settings']['max_rounds'], 'Unit revision limit exhausted; inspect the plan and limits')
+        unit.setdefault('human_feedback', []).append({'by':args.by, 'note':args.note, 'at':time.time(),
+                                                      'previous_status':unit['status'], 'calls_consumed':state['calls']})
+        unit.update(status='PENDING', role='executor', attempt=unit['attempt']+1, invalid_replies=0)
+        state.update(status='RUNNING', role='executor'); state.pop('reason', None)
+        project['stage']='RUNNING_EXECUTOR'; persist(work, project)
+        return {'status':project['stage'], 'unit':unit_id, 'calls_consumed':state['calls']}
+
     project.setdefault('feedback', []).append({'by': args.by, 'note': args.note, 'at': time.time()})
     require(state['round'] < project['settings']['max_rounds'], 'Revision limit exhausted; start a new workspace')
     state.update(round=state['round'] + 1, role='executor', status='RUNNING')
@@ -1141,6 +1262,9 @@ def parser():
     commands.add_parser('status')
     relocate = commands.add_parser('relocate', help='Move verified private outputs into <source-repo>_assessment')
     relocate.add_argument('--output-parent', required=True)
+    planning = commands.add_parser('prepare-plan', help='Plan bounded evidence units without model calls')
+    planning.add_argument('--activate', action='store_true', help='Archive stopped legacy preparation and use the plan; retain budgets and approvals')
+
     preview = commands.add_parser('preview', help='Generate AWS-assumed draft wireframes and AI-DLC package without independent validation')
     preview.add_argument('--skip-validation', action='store_true', required=True)
     preview.add_argument('--by', required=True)
@@ -1184,6 +1308,7 @@ def parser():
     u = commands.add_parser('review-site')
     u.add_argument('--provider', choices=['claude', 'codex'])
     f = commands.add_parser('feedback')
+    f.add_argument('--unit', help='Blocked evidence unit to revise; passed units remain sealed')
     f.add_argument('--by', required=True)
     f.add_argument('--note', required=True)
     commands.add_parser('package')
@@ -1231,6 +1356,11 @@ def main(argv=None, reporter=None):
             result = {'status': project['stage'], 'source_commit': project['source']['commit'],
                       'assessments': {k: read(Path(v['directory']) / 'run.json')['status'] for k, v in project['assessments'].items()},
                       'approvals': list(project['approvals']), 'package': project.get('package'), 'next_step': next_step(project)}
+            if project.get('checkpoints'):
+                import modernize_checkpoints as cp
+                plan, capsules = cp.verified_capsules(work, project, sys.modules[__name__])
+                result['preparation'] = {'units':len(plan['units']), 'reviewed_units':len(capsules),
+                    'calls_consumed':project['pipeline']['calls'], 'total_cap':project['settings']['max_model_calls']}
         elif getattr(args, 'detach', False):
             require((work / 'project.json').is_file(), 'Initialize first')
             with locked(work) as project:
@@ -1263,17 +1393,19 @@ def main(argv=None, reporter=None):
                         else: result = review_site(work, project, SimpleNamespace(provider=pending.get('provider')))
                         project.pop('pending_action', None)
                         persist(work, project)
-                    elif args.command == 'resume' and (project['stage'] in {'ASSESSMENT_APPROVED', 'REVISION_PENDING', 'RUNNING_EXECUTOR', 'RUNNING_REVIEWER'} or (project['stage'] == 'WAITING_FOR_RUNTIME' and project.get('pipeline'))):
+                    elif args.command == 'resume' and (project['stage'] in {'ASSESSMENT_APPROVED', 'PREPARATION_PLANNED', 'REVISION_PENDING', 'RUNNING_EXECUTOR', 'RUNNING_REVIEWER'} or (project['stage'] == 'WAITING_FOR_RUNTIME' and project.get('pipeline'))):
                         result = pipeline(work, project, args)
                     elif args.command == 'resume' and project['stage'] == 'VALIDATION_APPROVED':
                         result = review_site(work, project, SimpleNamespace(provider=None))
                     elif args.command == 'resume' and project['stage'] == 'SPECIFICATIONS_APPROVED':
                         result = package(work, project)
-                    elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED'}:
+                    elif args.command == 'resume' and project['stage'] in {'AWAITING_ASSESSMENT_APPROVAL', 'AWAITING_VALIDATION_APPROVAL', 'AWAITING_SPECIFICATIONS_APPROVAL', 'PACKAGED', 'PROVIDER_REVIEW_REQUIRED', 'BLOCKED', 'REWORK_LIMIT'}:
                         result = {'status': project['stage'], 'next_step': next_step(project)}
                     elif args.command == 'relocate':
                         import modernize_workspace
                         result = modernize_workspace.relocate(work, project, args.output_parent, sys.modules[__name__])
+                    elif args.command == 'prepare-plan': result = preparation_plan(work, project, args)
+
                     elif args.command == 'preview':
                         import modernize_preview
                         result = modernize_preview.run(work, project, args, sys.modules[__name__])

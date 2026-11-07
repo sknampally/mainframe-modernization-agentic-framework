@@ -17,7 +17,7 @@ from prompt_toolkit.history import InMemoryHistory
 from pilot import Blocked
 
 COMMANDS = ['help', 'menu', 'guide', 'init', 'workspace', 'status', 'assess', 'resume',
-            'compare', 'approve', 'preview', 'relocate', 'validate', 'decide', 'review-site', 'feedback',
+            'compare', 'approve', 'preview', 'relocate', 'prepare-plan', 'model-budget', 'validate', 'decide', 'review-site', 'feedback',
             'artifacts', 'package', 'privacy', 'demo', 'live', 'next', 'exit']
 ACTIONS = {'1':'init', '2':'assess', '3':'status', '4':'resume', '5':'compare',
            '6':'validate', '7':'review-site', '8':'package', '9':'guide', '0':'exit'}
@@ -135,7 +135,7 @@ class Terminal:
         for key,value in result.items():
             if key=='status':continue
             # Hide values that can contain paths, resource identifiers or arbitrary error text.
-            if self.private and key not in {'next_step','model_calls','calls','round','changed_files','semantic_review','hint'}:
+            if self.private and key not in {'next_step','model_calls','calls','round','changed_files','semantic_review','hint','units','minimum_calls','calls_consumed','calls_remaining','reviewed_units','opaque_segments','remaining_calls','minimum_additional_calls','total_cap'}:
                 value='Details hidden by presentation privacy; /privacy reveals local results.'
             table.add_row(clean(key.replace('_',' ').title()),clean(value))
         self.console.print(Panel(table,title=Text(state.replace('_',' ')),border_style='red' if failed else 'green'))
@@ -144,7 +144,7 @@ class Terminal:
         table=Table('Command','Purpose',box=box.SIMPLE,expand=True)
         for command,purpose in [('init','Guided setup; continue incomplete setup'),('workspace','Select an existing private project'),
              ('status / resume','Inspect saved state / continue interrupted work'),('assess','Authorize source upload and start another assessment'),
-             ('preview --skip-validation --by NAME --note REASON','Generate an AWS-assumed draft UI and AI-DLC package'),('relocate --output-parent PATH','Move outputs into a verified repository-named assessment folder'),('compare','Compare two preserved assessment snapshots'),('approve','Record assessment, validation or business approval'),
+             ('preview --skip-validation --by NAME --note REASON','Generate an AWS-assumed draft UI and AI-DLC package'),('relocate --output-parent PATH','Move outputs into a verified repository-named assessment folder'),('prepare-plan','Preview evidence units and minimum model calls; no AI calls'),('model-budget','Record an explicitly approved total call cap'),('compare','Compare two preserved assessment snapshots'),('approve','Record assessment, validation or business approval'),
              ('validate','Run executor and independent reviewer'),('decide / feedback','Record SME answers or request a revision'),
              ('review-site','Generate stakeholder HTML using the chosen provider'),('artifacts','List saved preparation and review files'),
              ('package','Create the approved implementation package'),('guide [setup|workflow|comparison]','Read built-in documentation'),
@@ -215,7 +215,7 @@ class Terminal:
             path=Path(self.ask('Existing private workspace path')).expanduser().resolve()
             require((path/'project.json').is_file(),'No saved project at that path')
             select_workspace(path);self.dashboard();return True
-        if cmd not in {'init','assess','resume','compare','approve','preview','relocate','validate','review-site','package','decide','feedback'}:
+        if cmd not in {'init','assess','resume','compare','approve','preview', 'relocate','prepare-plan','model-budget','validate','review-site','package','decide','feedback'}:
             self.say('Unknown command. Type /help or choose a menu number.','yellow');return True
         if cmd=='compare' and not args:
             args=['--left',self.ask('First assessment label'),'--right',self.ask('Second assessment label')]

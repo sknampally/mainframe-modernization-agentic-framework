@@ -286,6 +286,7 @@ def next_step(project):
     if project['stage'] == 'PROVIDER_REVIEW_REQUIRED':
         return 'Review the private provider refusal and request content; automatic model retries are stopped.'
     stage = project['stage']
+    if stage == 'PREPARATION_PLANNED': return 'Review modernize prepare-plan and the call budget, then modernize validate'
     if project.get('pending_action'): return 'modernize resume'
     if stage == 'PACKAGED': return 'Inspect the generated package and its deferred work boundaries.'
     if stage == 'SPECIFICATIONS_APPROVED': return 'modernize package'
