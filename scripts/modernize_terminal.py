@@ -16,10 +16,10 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import InMemoryHistory
 from pilot import Blocked
 
-COMMANDS = ['help', 'menu', 'guide', 'init', 'workspace', 'status', 'assess', 'resume',
+COMMANDS = ['flow', 'help', 'menu', 'guide', 'init', 'workspace', 'status', 'assess', 'resume',
             'compare', 'approve', 'preview', 'relocate', 'prepare-plan', 'model-budget', 'validate', 'decide', 'review-site', 'feedback',
             'artifacts', 'package', 'privacy', 'demo', 'live', 'next', 'exit']
-ACTIONS = {'1':'init', '2':'assess', '3':'status', '4':'resume', '5':'compare',
+ACTIONS = {'1':'flow', '2':'assess', '3':'status', '4':'resume', '5':'compare',
            '6':'validate', '7':'review-site', '8':'package', '9':'guide', '0':'exit'}
 DEMO_STAGES = ['READY_TO_ASSESS', 'AWAITING_ASSESSMENT_APPROVAL', 'ASSESSMENT_APPROVED',
                'AWAITING_VALIDATION_APPROVAL', 'VALIDATION_APPROVED',
@@ -83,7 +83,7 @@ class Terminal:
         self.header()
         project = self.project()
         if not project:
-            self.console.print(Panel('Start a guided setup to connect source, AWS access and agent runtimes.\nChoose 1 or type /init. Installation help: /guide setup', title='Welcome',border_style='blue'))
+            self.console.print(Panel('Start a guided setup to connect source, AWS access and agent runtimes.\nChoose 1 or type /flow. Installation help: /guide setup', title='Welcome',border_style='blue'))
         else:
             stage = project.get('stage','UNKNOWN')
             self.say('Current state  '+stage.replace('_',' '),'bold yellow')
@@ -122,7 +122,7 @@ class Terminal:
     def menu(self):
         table=Table.grid(expand=True,padding=(0,2))
         table.add_column();table.add_column()
-        for left,right in [('1  Set up project','6  Validate findings'),('2  Start assessment','7  Generate HTML review'),
+        for left,right in [('1  Guided start / continue','6  Validate findings'),('2  Start assessment','7  Generate HTML review'),
                            ('3  Project status','8  Package for engineering'),('4  Resume saved work','9  Guides and help'),
                            ('5  Compare assessments','0  Exit')]:table.add_row(left,right)
         self.console.print(Panel(table,title='Workspace menu',border_style='blue'))
@@ -142,7 +142,7 @@ class Terminal:
 
     def help(self):
         table=Table('Command','Purpose',box=box.SIMPLE,expand=True)
-        for command,purpose in [('init','Guided setup; continue incomplete setup'),('workspace','Select an existing private project'),
+        for command,purpose in [('flow','Guided assessment, verification choice and draft/package generation'),('init','Guided setup; continue incomplete setup'),('workspace','Select an existing private project'),
              ('status / resume','Inspect saved state / continue interrupted work'),('assess','Authorize source upload and start another assessment'),
              ('preview --skip-validation --by NAME --note REASON','Generate an AWS-assumed draft UI and AI-DLC package'),('relocate --output-parent PATH','Move outputs into a verified repository-named assessment folder'),('prepare-plan','Preview evidence units and minimum model calls; no AI calls'),('model-budget','Record an explicitly approved total call cap'),('compare','Compare two preserved assessment snapshots'),('approve','Record assessment, validation or business approval'),
              ('validate','Run executor and independent reviewer'),('decide / feedback','Record SME answers or request a revision'),
@@ -179,7 +179,7 @@ class Terminal:
         if self.private:
             self.say('Artifact paths are hidden. Use /privacy if you want to reveal them locally.','yellow');return
         root=workspace()
-        allowed=['preparation/candidate-*.json','preparation/review-*.json','review-site-*/index.html','package-*.zip','comparison-*.json']
+        allowed=['reports/index.html','runs/*/assessment-review.html','previews/*/handoff/index.html','previews/*/index.html','packages/**/*.zip','preparation/candidate-*.json','preparation/review-*.json','review-site-*/index.html','package-*.zip','comparison-*.json']
         paths=sorted({str(p.relative_to(root)) for pattern in allowed for p in root.glob(pattern) if p.is_file() and not p.is_symlink()})
         for path in paths:self.say(path)
         if not paths:self.say('No preparation or review outputs yet.')
@@ -208,7 +208,9 @@ class Terminal:
                 self.dashboard()
             else:self.say('Preview is read-only. Use /next to illustrate the next gate, or /live for real actions.','yellow')
             return True
-        if cmd=='next':self.say('Use the suggested command on the dashboard; live gates cannot be skipped.','yellow');return True
+        if cmd in {'flow', 'next'}:
+            from modernize_flow import run
+            run(self);return True
         if cmd=='workspace':
             from modernize_setup import select_workspace
             from pilot import require
@@ -235,7 +237,9 @@ class Terminal:
         if self.demo:self.say('Use /next to walk through simulated stages. No live readiness or modernization result is implied.','yellow')
         if initial:
             try:self.dispatch(initial)
-            except (KeyboardInterrupt, EOFError):self.say('Setup cancelled. Use /init to continue when ready.','yellow')
+            except (KeyboardInterrupt, EOFError):self.say('Setup cancelled. Use /flow to continue when ready.','yellow')
+            except (Blocked,OSError,ValueError,RuntimeError,KeyError) as error:
+                self.report({'status':'BLOCKED','reason':str(error),'next_step':'Use /flow to continue'})
         if self.session is None:
             self.session=PromptSession(history=InMemoryHistory(),completer=WordCompleter(['/'+x for x in COMMANDS]),complete_while_typing=False)
         while True:
@@ -244,7 +248,7 @@ class Terminal:
                 line=self.session.prompt([('ansicyan bold','modernize'),('',' · '+mode+' › ')])
                 if not self.dispatch(line):break
             except KeyboardInterrupt:
-                self.say('Action cancelled. Saved work remains available; /resume can continue interrupted work.','yellow')
+                self.say('Action cancelled. Saved work remains available; /flow can continue interrupted work.','yellow')
             except EOFError:break
             except SystemExit:
                 self.say('Check command options with /help. The console remains open.','yellow')

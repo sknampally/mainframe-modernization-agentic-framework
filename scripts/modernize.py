@@ -1322,9 +1322,9 @@ def parser():
 
 def main(argv=None, reporter=None):
     values = list(sys.argv[1:] if argv is None else argv)
-    if reporter is None and (not values or values in [['ui'], ['demo']]):
+    if reporter is None and (not values or values in [['ui'], ['demo'], ['flow']]):
         from modernize_terminal import launch
-        return launch(demo=values == ['demo'])
+        return launch(demo=values == ['demo'], initial='flow' if values == ['flow'] else None)
     if reporter is None and values == ['init'] and sys.stdin.isatty() and sys.stdout.isatty():
         from modernize_terminal import launch
         return launch(initial='init')
