@@ -86,3 +86,15 @@ Follow the [engineer installation guide](engineer-setup.md) before a new live se
 The [CLI guide](cli-guide.md) documents the source, cloud, evidence and approval
 requirements. Reframe uses the same gated controller; the menu does not bypass
 missing permissions, business decisions or source verification.
+
+
+## Guided start / continue
+
+Choose menu **1** or `/flow` (also `modernize flow` from your shell). The guide
+continues saved setup/assessment, pauses for explicit assessment review, and asks
+whether to generate an AWS-assumed draft or run independent verification.
+The draft route asks for an owner, reason, provider and export name, then produces
+both HTML wireframes and an AI-DLC draft ZIP. Reuse the export name when resuming.
+No reviewer PASS or stakeholder approval is fabricated. `/privacy` and `/artifacts`
+reveal the local report and package paths. Fresh runs use a separate output parent;
+previous evidence and cloud jobs are not deleted. See the README for installation.

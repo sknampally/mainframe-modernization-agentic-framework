@@ -22,23 +22,77 @@ Supply an S3 source ZIP, GitHub URL or clean local Git checkout, configure your 
 AWS/provider access, and use the built-in protocols.
 No custom prompt writing or manual agent handoffs are required for normal operation.
 
+## Run the guided workflow
+
+Install Git and uv, AWS CLI and your chosen design provider (Claude Code or Codex)
+using the [engineer setup guide](docs/engineer-setup.md). Authenticate your AWS profile
+and provider. AWS Transform application access is also required; terminal AWS login
+alone is insufficient. Setup checks the configured runtimes and offers resource setup.
+
+On macOS/Linux, or inside Ubuntu/WSL2 on Windows:
+
 ```bash
+git clone https://github.com/sknampally/mainframe-modernization-agentic-framework.git
+cd mainframe-modernization-agentic-framework
 uv tool install --force --managed-python --python 3.12 --editable .
 modernize
 ```
 
-Open the [Reframe terminal console](docs/terminal-console.md) for numbered menus,
-a phase dashboard, slash-command completion, built-in guides and human-readable
-results. `modernize demo` opens an explicitly simulated preview with no service calls.
-The existing commands remain available for scripts.
+Choose **1 — Guided start / continue**, or launch it directly with `modernize flow`.
+No custom prompts or manual command sequence are needed for the direct draft route.
 
-![Reframe terminal preview with synthetic data](docs/images/terminal-preview.svg)
+1. **Set up or continue.** Supply your source, private output directory, AWS profile,
+   region, bucket and provider. For an existing project, choose **continue** or
+   **fresh**. Fresh uses a separate output parent; it never deletes the previous run.
+2. **Assess.** Confirm source upload and the new AWS assessment. The flow waits for
+   a bounded interval and resumes the saved job on your next `/flow`. Authentication,
+   connector activation or service blockers can still require action; this is not a
+   guarantee of unattended AWS completion.
+3. **Review assessment.** Inspect the saved assessment report, then explicitly record
+   approval and confirm that the findings match your source. Answer **no** to pause.
+4. **Choose preparation.** Select **draft** to skip independent Claude verification,
+   record the accountable owner and reason, and choose Claude or Codex for design
+   generation. Or select **verify** to run the executor/reviewer within the saved
+   budget; unresolved decisions and review gates remain enforced.
+5. **Collect outputs.** The draft route generates HTML wireframes, proposed API and
+   design specifications, and an AI-DLC draft ZIP in one operation. Use `/privacy`
+   then `/artifacts` to see local report and package paths. Review the draft with
+   the SME, architect, business owner and technical lead before engineering use.
 
-The setup guide saves source/environment choices privately, checks tools and logins,
-offers AWS resource setup, and suggests the next command. Later commands reuse the
-active workspace: `modernize assess`, `modernize status`, `modernize resume`.
-Explicit approvals remain required; rerun `modernize init` to continue incomplete setup.
+**Skipping verification does not approve the design.** Draft findings are marked
+AWS-assumed, independent verification is skipped, stakeholder decisions remain pending,
+and acceptance tests are NOT RUN. A design-generation Claude call is distinct from
+executor/reviewer verification. No application or infrastructure is built.
 
+All outputs stay in a private `<repository>_assessment` folder under your chosen parent:
+
+```text
+<repository>_assessment/
+  source/                       # managed source checkout, when applicable
+  runs/                         # assessment evidence and review reports
+  preparation/                  # independent verification, if selected
+  previews/guided-draft/handoff/ # HTML wireframes and draft specifications
+  packages/guided-draft/         # ai-dlc-draft.zip
+  reports/index.html            # report and package links
+```
+
+Return with `modernize` → **1** or `/flow`. Reuse the same draft name to resume or
+verify/reuse an existing export; provider failures do not become approvals. Ctrl+C
+cancels the local wait, not an already-started AWS job. Saved evidence is preserved.
+The verified route may pause for SME decisions or budget changes; `/help` and
+`/guide workflow` describe these controls. `/init` remains available for setup alone.
+
+After pulling a merged update, reinstall dependencies from the repository directory:
+
+```bash
+git switch main
+git pull --ff-only
+uv tool install --force --managed-python --python 3.12 --editable .
+modernize
+```
+
+`modernize demo` is a simulated preview with no service calls. Existing commands remain
+available for scripts. See the [terminal guide](docs/terminal-console.md).
 
 ## Why this framework exists
 
