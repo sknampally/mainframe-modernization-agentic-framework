@@ -42,7 +42,10 @@ Choose **1 — Guided start / continue**, or launch it directly with `modernize 
 No custom prompts or manual command sequence are needed for the direct draft route.
 
 1. **Set up or continue.** Supply your source, private output directory, AWS profile,
-   region, bucket and provider. For an existing project, choose **continue** or
+   region, bucket and provider. AWS profile has **no default**: enter it explicitly
+   (use `aws configure list-profiles` to find configured names). The CLI verifies
+   access and offers SSO login when required. Continuing a saved run reuses its
+   explicitly selected profile. For an existing project, choose **continue** or
    **fresh**. Fresh uses a separate output parent; it never deletes the previous run.
 2. **Assess.** Confirm source upload and the new AWS assessment. The flow waits for
    a bounded interval and resumes the saved job on your next `/flow`. Authentication,
